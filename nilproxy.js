@@ -1,255 +1,285 @@
-// worker.js - Cloudflare Worker with ES Module format
-
-const HTML_TEMPLATE = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Unblocked Browser</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: system-ui, sans-serif; background:#0a0a0f; color:#e0e0e0; height:100vh; display:flex; flex-direction:column; }
-#toolbar { background:#1a1a2e; padding:12px 20px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #333; flex-shrink:0; flex-wrap:wrap; }
-#url-input { flex:1; min-width:200px; padding:10px 16px; background:#2a2a40; border:1px solid #444; border-radius:8px; color:#fff; font-size:16px; outline:none; }
-#url-input:focus { border-color:#6c63ff; }
-#go-btn, #shorten-btn { padding:10px 20px; border:none; border-radius:8px; color:#fff; font-weight:600; cursor:pointer; font-size:16px; }
-#go-btn { background:#6c63ff; }
-#go-btn:hover { background:#7b73ff; }
-#shorten-btn { background:#2a2a4a; }
-#shorten-btn:hover { background:#3a3a5a; }
-#frame-container { flex:1; position:relative; background:#111; }
-#content-frame { width:100%; height:100%; border:none; background:#fff; }
-#loading { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#6c63ff; font-size:18px; }
-#shortened-display { display:none; margin-top:8px; padding:8px 14px; background:#1a1a2e; border-radius:6px; border:1px solid #444; width:100%; word-break:break-all; }
-#shortened-display a { color:#6c63ff; text-decoration:none; }
-#shortened-display a:hover { text-decoration:underline; }
-</style>
-</head>
-<body>
-<div id="toolbar">
-<input id="url-input" type="text" placeholder="Enter URL" spellcheck="false">
-<button id="go-btn">Go</button>
-<button id="shorten-btn">Shorten</button>
-<div id="shortened-display"></div>
-</div>
-<div id="frame-container">
-<iframe id="content-frame" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
-<div id="loading">Loading...</div>
-</div>
-<script>
-(function() {
-  const frame = document.getElementById('content-frame');
-  const input = document.getElementById('url-input');
-  const goBtn = document.getElementById('go-btn');
-  const shortenBtn = document.getElementById('shorten-btn');
-  const loading = document.getElementById('loading');
-  const display = document.getElementById('shortened-display');
-
-  const proxyFetch = async (targetUrl) => {
-    loading.style.display = 'block';
-    try {
-      const response = await fetch('/proxy?url=' + encodeURIComponent(targetUrl));
-      const html = await response.text();
-      const rewritten = html.replace(
-        /(href|src|action)=["']([^"']*)["']/gi,
-        (match, attr, value) => {
-          if (value.startsWith('http') || value.startsWith('//')) {
-            const full = value.startsWith('//') ? 'https:' + value : value;
-            return attr + '="/proxy?url=' + encodeURIComponent(full) + '"';
-          } else if (value.startsWith('/')) {
-            const base = new URL(targetUrl).origin;
-            return attr + '="/proxy?url=' + encodeURIComponent(base + value) + '"';
-          } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
-            const base = new URL(targetUrl).origin;
-            const fixed = value.startsWith('./') ? value.slice(1) : value;
-            return attr + '="/proxy?url=' + encodeURIComponent(base + '/' + fixed) + '"';
-          }
-          return match;
-        }
-      );
-      frame.srcdoc = rewritten;
-    } catch (err) {
-      frame.srcdoc = '<h1 style="color:red;padding:40px;">Error: ' + err.message + '</h1>';
-    } finally {
-      loading.style.display = 'none';
-    }
-  };
-
-  const shortenUrl = async (longUrl) => {
-    try {
-      const response = await fetch('/shorten', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: longUrl })
-      });
-      const data = await response.json();
-      if (data.short) {
-        const full = window.location.origin + '/' + data.short;
-        display.innerHTML = 'Shortened: <a href="' + full + '" target="_blank">' + full + '</a>';
-        display.style.display = 'block';
-      } else {
-        display.innerHTML = 'Error: ' + (data.error || 'unknown');
-        display.style.display = 'block';
-      }
-    } catch (err) {
-      display.innerHTML = 'Error: ' + err.message;
-      display.style.display = 'block';
-    }
-  };
-
-  goBtn.addEventListener('click', () => {
-    let url = input.value.trim();
-    if (!url) return;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
-    proxyFetch(url);
-    display.style.display = 'none';
-  });
-
-  shortenBtn.addEventListener('click', () => {
-    let url = input.value.trim();
-    if (!url) return;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
-    shortenUrl(url);
-  });
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') goBtn.click();
-  });
-
-  if (window.location.pathname.length > 1 && window.location.pathname !== '/') {
-    const slug = window.location.pathname.slice(1);
-    fetch('/resolve/' + slug)
-      .then(res => res.json())
-      .then(data => {
-        if (data.url) {
-          input.value = data.url;
-          proxyFetch(data.url);
-          history.replaceState(null, '', '/');
-        }
-      })
-      .catch(() => {});
-  }
-
-  input.value = 'https://example.com';
-  setTimeout(() => goBtn.click(), 300);
-})();
-</script>
-</body>
-</html>`;
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
     if (path === '/' || path === '/index.html') {
-      return new Response(HTML_TEMPLATE, {
+      return new Response(getCloakedApp(), {
         headers: { 
-          'Content-Type': 'text/html', 
-          'Cache-Control': 'public, max-age=86400' 
+          'Content-Type': 'text/html',
+          'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
       });
     }
 
-    if (path === '/proxy') {
+    if (path === '/cloak') {
       const target = url.searchParams.get('url');
       if (!target) {
-        return new Response('Missing url parameter', { status: 400 });
+        return new Response('Missing url', { status: 400 });
       }
 
       try {
         const targetUrl = new URL(target);
-        const response = await fetch(target, {
+        const response = await fetch(targetUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Referer': targetUrl.origin
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
           }
         });
 
-        const contentType = response.headers.get('content-type') || 'text/html';
+        const contentType = response.headers.get('content-type') || '';
         
         if (contentType.includes('text/html')) {
-          const html = await response.text();
-          const rewritten = html.replace(
-            /(href|src|action)=["']([^"']*)["']/gi,
-            (match, attr, value) => {
-              if (value.startsWith('http') || value.startsWith('//')) {
-                const full = value.startsWith('//') ? 'https:' + value : value;
-                return attr + '="/proxy?url=' + encodeURIComponent(full) + '"';
-              } else if (value.startsWith('/')) {
-                return attr + '="/proxy?url=' + encodeURIComponent(targetUrl.origin + value) + '"';
-              } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
-                const fixed = value.startsWith('./') ? value.slice(1) : value;
-                return attr + '="/proxy?url=' + encodeURIComponent(targetUrl.origin + '/' + fixed) + '"';
+          const baseUrl = targetUrl.origin;
+          const proxyBase = url.origin;
+
+          // HTMLRewriter transforms links to keep them inside the proxy
+          class LinkRewriter {
+            constructor(attribute, baseUrl, proxyBase) {
+              this.attribute = attribute;
+              this.baseUrl = baseUrl;
+              this.proxyBase = proxyBase;
+            }
+            element(element) {
+              const attr = element.getAttribute(this.attribute);
+              if (!attr) return;
+              if (attr.startsWith('javascript:') || attr.startsWith('data:') || attr.startsWith('#')) return;
+              let fullUrl;
+              try {
+                fullUrl = new URL(attr, this.baseUrl).href;
+              } catch {
+                return;
               }
-              return match;
+              if (fullUrl.startsWith(this.proxyBase)) return;
+              const proxyUrl = `${this.proxyBase}/cloak?url=${encodeURIComponent(fullUrl)}`;
+              element.setAttribute(this.attribute, proxyUrl);
             }
-          );
-          return new Response(rewritten, {
-            headers: { 
-              'Content-Type': 'text/html', 
-              'Cache-Control': 'no-cache' 
-            }
+          }
+
+          const rewriter = new HTMLRewriter()
+            .on('a', new LinkRewriter('href', baseUrl, proxyBase))
+            .on('link', new LinkRewriter('href', baseUrl, proxyBase))
+            .on('img', new LinkRewriter('src', baseUrl, proxyBase))
+            .on('script', new LinkRewriter('src', baseUrl, proxyBase))
+            .on('form', new LinkRewriter('action', baseUrl, proxyBase));
+
+          const rewrittenResponse = rewriter.transform(response);
+          
+          const headers = new Headers(rewrittenResponse.headers);
+          headers.set('Access-Control-Allow-Origin', '*');
+          headers.delete('Content-Security-Policy');
+          headers.delete('X-Frame-Options');
+          headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+          // Strip Securly/Gaggle monitoring scripts
+          const body = await rewrittenResponse.text();
+          const strippedBody = body
+            .replace(/<script[^>]*src=["'][^"']*securly[^"']*["'][^>]*><\/script>/gi, '')
+            .replace(/<script[^>]*>.*?securly.*?<\/script>/gis, '')
+            .replace(/<script[^>]*src=["'][^"']*gaggle[^"']*["'][^>]*><\/script>/gi, '')
+            .replace(/<script[^>]*>.*?gaggle.*?<\/script>/gis, '')
+            .replace(/securly/gi, '')
+            .replace(/gaggle/gi, '')
+            .replace(/goguardian/gi, '');
+
+          return new Response(strippedBody, {
+            status: rewrittenResponse.status,
+            headers: headers
           });
         }
 
-        const buffer = await response.arrayBuffer();
-        return new Response(buffer, {
-          headers: { 'Content-Type': contentType }
+        const headers = new Headers(response.headers);
+        headers.set('Access-Control-Allow-Origin', '*');
+        return new Response(response.body, {
+          status: response.status,
+          headers: headers
         });
-      } catch (error) {
-        return new Response('Proxy error: ' + error.message, { status: 500 });
-      }
-    }
 
-    if (path === '/shorten' && request.method === 'POST') {
-      try {
-        const body = await request.json();
-        const longUrl = body.url;
-        if (!longUrl) {
-          return new Response(JSON.stringify({ error: 'Missing url' }), { 
-            status: 400,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-
-        const slug = Math.random().toString(36).substring(2, 8);
-        await env.KV.put(slug, longUrl);
-        return new Response(JSON.stringify({ short: slug }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
       } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), {
+        return new Response(`Error: ${error.message}`, { 
           status: 500,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'text/plain' }
         });
       }
     }
 
-    if (path.startsWith('/resolve/')) {
-      const slug = path.slice(9);
-      const longUrl = await env.KV.get(slug);
-      if (longUrl) {
-        return new Response(JSON.stringify({ url: longUrl }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
-    }
-
-    const slug = path.slice(1);
-    if (slug && slug.length > 0 && slug.length < 20) {
-      const longUrl = await env.KV.get(slug);
-      if (longUrl) {
-        return new Response(HTML_TEMPLATE, {
-          headers: { 'Content-Type': 'text/html' }
-        });
-      }
-    }
-
-    return new Response('Not found', { status: 404 });
+    return new Response('404 Not Found', { status: 404 });
   }
 };
+
+function getCloakedApp() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Classroom</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { 
+      font-family: 'Google Sans', system-ui, sans-serif; 
+      background: #f8f9fa; 
+      height: 100vh; 
+      overflow: hidden;
+    }
+    /* Fixed toolbar - NEVER gets overwritten */
+    #toolbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: #1a73e8;
+      padding: 12px 20px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    #toolbar input {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 24px;
+      font-size: 14px;
+      outline: none;
+      background: rgba(255,255,255,0.9);
+    }
+    #toolbar input:focus {
+      background: white;
+    }
+    #toolbar button {
+      padding: 10px 24px;
+      background: rgba(255,255,255,0.2);
+      border: none;
+      border-radius: 24px;
+      color: white;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #toolbar button:hover {
+      background: rgba(255,255,255,0.3);
+    }
+    /* iframe fills the rest */
+    #frame-container {
+      position: fixed;
+      top: 64px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: white;
+    }
+    #content-frame {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: white;
+    }
+    #loading {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #1a73e8;
+      font-size: 18px;
+      z-index: 50;
+      background: rgba(255,255,255,0.9);
+      padding: 20px 40px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .decoy-label {
+      color: rgba(255,255,255,0.7);
+      font-size: 12px;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <!-- FIXED TOOLBAR - Never gets overwritten -->
+  <div id="toolbar">
+    <span class="decoy-label">📚 Classroom</span>
+    <input id="url-input" type="text" placeholder="Enter URL (e.g., example.com)" spellcheck="false">
+    <button id="go-btn">Go</button>
+    <button id="cloak-btn" style="background:rgba(255,255,255,0.1);">🛡️ Cloak</button>
+  </div>
+
+  <!-- Loading indicator -->
+  <div id="loading">Loading...</div>
+
+  <!-- iframe where content loads -->
+  <div id="frame-container">
+    <iframe id="content-frame" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+  </div>
+
+  <script>
+    (function() {
+      const frame = document.getElementById('content-frame');
+      const input = document.getElementById('url-input');
+      const goBtn = document.getElementById('go-btn');
+      const cloakBtn = document.getElementById('cloak-btn');
+      const loading = document.getElementById('loading');
+
+      const proxyFetch = async (targetUrl) => {
+        loading.style.display = 'block';
+        try {
+          const response = await fetch('/cloak?url=' + encodeURIComponent(targetUrl));
+          if (!response.ok) throw new Error('Fetch failed: ' + response.status);
+          const html = await response.text();
+          // This loads content INTO the iframe WITHOUT overwriting the parent UI
+          frame.srcdoc = html;
+        } catch (err) {
+          frame.srcdoc = '<h1 style="color:red;padding:40px;">Error: ' + err.message + '</h1>';
+        } finally {
+          loading.style.display = 'none';
+        }
+      };
+
+      const loadUrl = () => {
+        let url = input.value.trim();
+        if (!url) return;
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          url = 'https://' + url;
+        }
+        proxyFetch(url);
+      };
+
+      // Cloak: open in new about:blank window with decoy
+      const openCloaked = () => {
+        const url = input.value.trim();
+        if (!url) return;
+        const w = window.open('about:blank');
+        if (!w) {
+          alert('Pop-up blocked. Allow pop-ups for this site.');
+          return;
+        }
+        w.document.write(\`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Google Classroom</title></head>
+          <body style="margin:0;overflow:hidden;">
+            <iframe src="\${window.location.origin}/?cloak=launch&url=\${encodeURIComponent(url)}" 
+                    style="width:100%;height:100%;border:none;">
+            </iframe>
+          </body>
+          </html>
+        \`);
+        w.document.close();
+        // The parent tab stays on about:blank with no history entry
+      };
+
+      goBtn.addEventListener('click', loadUrl);
+      cloakBtn.addEventListener('click', openCloaked);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loadUrl();
+      });
+
+      input.value = 'example.com';
+      setTimeout(loadUrl, 300);
+    })();
+  </script>
+</body>
+</html>`;
+}
