@@ -5,10 +5,10 @@ const dns = require("node:dns/promises");
 const { URL } = require("node:url");
 
 const host = process.env.HOST || "127.0.0.1";
-const port = Number(process.env.PORT || 8787);
+const port = parsePositiveInteger(process.env.PORT || "8787", "PORT");
 const token = process.env.PROXY_TOKEN || "";
 const corsOrigin = process.env.CORS_ORIGIN || "*";
-const publicBaseUrl = normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
+const publicBaseUrl = readPublicBaseUrl();
 const allowedHosts = new Set(
   (process.env.ALLOWED_HOSTS || "")
     .split(",")
@@ -29,8 +29,19 @@ const hopByHopHeaders = new Set([
   "origin",
   "referer"
 ]);
-const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 5 * 1024 * 1024);
-const timeoutMs = Number(process.env.TIMEOUT_MS || 15000);
+const maxBodyBytes = parsePositiveInteger(process.env.MAX_BODY_BYTES || `${5 * 1024 * 1024}`, "MAX_BODY_BYTES");
+const timeoutMs = parsePositiveInteger(process.env.TIMEOUT_MS || "15000", "TIMEOUT_MS");
+
+function parsePositiveInteger(value, name) {
+  const number = Number(value);
+
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    console.error(`${name} must be a positive integer`);
+    process.exit(1);
+  }
+
+  return number;
+}
 
 function createHttpError(message, statusCode) {
   return Object.assign(new Error(message), { statusCode });
@@ -119,6 +130,15 @@ function normalizePublicBaseUrl(rawUrl) {
   url.hash = "";
 
   return url.href;
+}
+
+function readPublicBaseUrl() {
+  try {
+    return normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
+  } catch (error) {
+    console.error(`PUBLIC_BASE_URL is invalid: ${error.message}`);
+    process.exit(1);
+  }
 }
 
 function publicAppUrl(req) {

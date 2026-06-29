@@ -1,0 +1,17 @@
+{
+  "name": "nilp",
+  "main": "nilp.js",
+  "compatibility_date": "2026-06-29",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "HOST": "127.0.0.1",
+    "PORT": "8787",
+    "ALLOWED_HOSTS": "",
+    "CORS_ORIGIN": "*",
+    "PUBLIC_BASE_URL": "",
+    "MAX_BODY_BYTES": "5242880",
+    "TIMEOUT_MS": "15000"
+  }
+}
