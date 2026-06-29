@@ -19,7 +19,19 @@ export default {
       }
 
       try {
-        const targetUrl = new URL(target);
+        // Normalize the URL - auto-add https if missing
+        let targetUrl;
+        try {
+          // If it doesn't have a protocol, add https
+          if (!target.match(/^https?:\/\//i)) {
+            targetUrl = new URL('https://' + target);
+          } else {
+            targetUrl = new URL(target);
+          }
+        } catch (e) {
+          return new Response('Invalid URL: ' + target, { status: 400 });
+        }
+
         const response = await fetch(targetUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -33,7 +45,7 @@ export default {
           const baseUrl = targetUrl.origin;
           const proxyBase = url.origin;
 
-          // HTMLRewriter transforms links to keep them inside the proxy
+          // Rewrite ALL links to go through the proxy
           class LinkRewriter {
             constructor(attribute, baseUrl, proxyBase) {
               this.attribute = attribute;
@@ -44,13 +56,17 @@ export default {
               const attr = element.getAttribute(this.attribute);
               if (!attr) return;
               if (attr.startsWith('javascript:') || attr.startsWith('data:') || attr.startsWith('#')) return;
+              
               let fullUrl;
               try {
                 fullUrl = new URL(attr, this.baseUrl).href;
               } catch {
                 return;
               }
+              
               if (fullUrl.startsWith(this.proxyBase)) return;
+              
+              // Preserve the protocol for external links
               const proxyUrl = `${this.proxyBase}/cloak?url=${encodeURIComponent(fullUrl)}`;
               element.setAttribute(this.attribute, proxyUrl);
             }
@@ -71,7 +87,7 @@ export default {
           headers.delete('X-Frame-Options');
           headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
 
-          // Strip Securly/Gaggle monitoring scripts
+          // Strip monitoring scripts
           const body = await rewrittenResponse.text();
           const strippedBody = body
             .replace(/<script[^>]*src=["'][^"']*securly[^"']*["'][^>]*><\/script>/gi, '')
@@ -122,7 +138,6 @@ function getCloakedApp() {
       height: 100vh; 
       overflow: hidden;
     }
-    /* Fixed toolbar - NEVER gets overwritten */
     #toolbar {
       position: fixed;
       top: 0;
@@ -130,41 +145,58 @@ function getCloakedApp() {
       right: 0;
       z-index: 100;
       background: #1a73e8;
-      padding: 12px 20px;
+      padding: 10px 20px;
       display: flex;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      flex-wrap: wrap;
     }
-    #toolbar input {
+    #toolbar .logo {
+      color: white;
+      font-weight: 500;
+      font-size: 16px;
+      white-space: nowrap;
+    }
+    #url-bar {
       flex: 1;
-      padding: 10px 16px;
+      min-width: 200px;
+      padding: 8px 16px;
       border: none;
-      border-radius: 24px;
+      border-radius: 20px;
       font-size: 14px;
       outline: none;
-      background: rgba(255,255,255,0.9);
+      background: rgba(255,255,255,0.95);
+      color: #202124;
     }
-    #toolbar input:focus {
+    #url-bar:focus {
       background: white;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.4);
     }
     #toolbar button {
-      padding: 10px 24px;
+      padding: 8px 18px;
       background: rgba(255,255,255,0.2);
       border: none;
-      border-radius: 24px;
+      border-radius: 20px;
       color: white;
       font-weight: 500;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
+      white-space: nowrap;
+      transition: background 0.2s;
     }
     #toolbar button:hover {
       background: rgba(255,255,255,0.3);
     }
-    /* iframe fills the rest */
+    #toolbar button.primary {
+      background: rgba(255,255,255,0.3);
+    }
+    #toolbar button.primary:hover {
+      background: rgba(255,255,255,0.4);
+    }
     #frame-container {
       position: fixed;
-      top: 64px;
+      top: 56px;
       left: 0;
       right: 0;
       bottom: 0;
@@ -183,73 +215,171 @@ function getCloakedApp() {
       left: 50%;
       transform: translate(-50%, -50%);
       color: #1a73e8;
-      font-size: 18px;
+      font-size: 16px;
       z-index: 50;
-      background: rgba(255,255,255,0.9);
-      padding: 20px 40px;
+      background: rgba(255,255,255,0.95);
+      padding: 16px 32px;
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
-    .decoy-label {
-      color: rgba(255,255,255,0.7);
+    #status-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(26, 115, 232, 0.95);
+      padding: 4px 20px;
+      color: white;
       font-size: 12px;
-      margin-right: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      height: 28px;
+    }
+    #status-bar .url-display {
+      opacity: 0.8;
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 70%;
+    }
+    #status-bar .status-text {
+      opacity: 0.7;
+      font-size: 11px;
+    }
+    .badge {
+      background: rgba(255,255,255,0.15);
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
-  <!-- FIXED TOOLBAR - Never gets overwritten -->
   <div id="toolbar">
-    <span class="decoy-label">📚 Classroom</span>
-    <input id="url-input" type="text" placeholder="Enter URL (e.g., example.com)" spellcheck="false">
-    <button id="go-btn">Go</button>
-    <button id="cloak-btn" style="background:rgba(255,255,255,0.1);">🛡️ Cloak</button>
+    <span class="logo">📚 Classroom</span>
+    <input id="url-bar" type="text" placeholder="Search or enter URL (e.g., example.com)" spellcheck="false" autofocus>
+    <button id="go-btn" class="primary">Go</button>
+    <button id="cloak-btn">🛡️ Cloak</button>
+    <button id="back-btn">←</button>
+    <button id="forward-btn">→</button>
+    <button id="refresh-btn">↻</button>
   </div>
 
-  <!-- Loading indicator -->
   <div id="loading">Loading...</div>
 
-  <!-- iframe where content loads -->
   <div id="frame-container">
     <iframe id="content-frame" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+  </div>
+
+  <div id="status-bar">
+    <span class="url-display" id="current-url">Ready</span>
+    <span class="status-text"><span class="badge">🛡️ Secure</span> Proxy active</span>
   </div>
 
   <script>
     (function() {
       const frame = document.getElementById('content-frame');
-      const input = document.getElementById('url-input');
+      const urlBar = document.getElementById('url-bar');
       const goBtn = document.getElementById('go-btn');
       const cloakBtn = document.getElementById('cloak-btn');
+      const backBtn = document.getElementById('back-btn');
+      const forwardBtn = document.getElementById('forward-btn');
+      const refreshBtn = document.getElementById('refresh-btn');
       const loading = document.getElementById('loading');
+      const currentUrlDisplay = document.getElementById('current-url');
+
+      let historyStack = [];
+      let historyIndex = -1;
+      let currentUrl = '';
 
       const proxyFetch = async (targetUrl) => {
+        if (!targetUrl) return;
+        
         loading.style.display = 'block';
+        currentUrlDisplay.textContent = 'Loading: ' + targetUrl;
+        
         try {
           const response = await fetch('/cloak?url=' + encodeURIComponent(targetUrl));
           if (!response.ok) throw new Error('Fetch failed: ' + response.status);
           const html = await response.text();
-          // This loads content INTO the iframe WITHOUT overwriting the parent UI
           frame.srcdoc = html;
+          
+          currentUrl = targetUrl;
+          currentUrlDisplay.textContent = targetUrl;
+          urlBar.value = targetUrl;
+          
+          // Update history
+          if (historyIndex < historyStack.length - 1) {
+            historyStack = historyStack.slice(0, historyIndex + 1);
+          }
+          historyStack.push(targetUrl);
+          historyIndex = historyStack.length - 1;
+          
         } catch (err) {
-          frame.srcdoc = '<h1 style="color:red;padding:40px;">Error: ' + err.message + '</h1>';
+          frame.srcdoc = '<h1 style="color:red;padding:40px;font-family:system-ui;">Error: ' + err.message + '</h1>';
+          currentUrlDisplay.textContent = 'Error: ' + err.message;
         } finally {
           loading.style.display = 'none';
         }
       };
 
-      const loadUrl = () => {
-        let url = input.value.trim();
-        if (!url) return;
-        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      const normalizeUrl = (input) => {
+        let url = input.trim();
+        if (!url) return null;
+        
+        // If it looks like a search query (contains spaces or no dot), treat as Google search
+        if (url.includes(' ') || (!url.includes('.') && !url.includes('/'))) {
+          return 'https://www.google.com/search?q=' + encodeURIComponent(url);
+        }
+        
+        // Auto-add https:// if no protocol
+        if (!url.match(/^https?:\/\//i)) {
           url = 'https://' + url;
         }
-        proxyFetch(url);
+        return url;
       };
 
-      // Cloak: open in new about:blank window with decoy
+      const loadUrl = () => {
+        const normalized = normalizeUrl(urlBar.value);
+        if (normalized) {
+          proxyFetch(normalized);
+        }
+      };
+
+      const goBack = () => {
+        if (historyIndex > 0) {
+          historyIndex--;
+          const url = historyStack[historyIndex];
+          urlBar.value = url;
+          proxyFetch(url);
+        }
+      };
+
+      const goForward = () => {
+        if (historyIndex < historyStack.length - 1) {
+          historyIndex++;
+          const url = historyStack[historyIndex];
+          urlBar.value = url;
+          proxyFetch(url);
+        }
+      };
+
+      const refresh = () => {
+        if (currentUrl) {
+          proxyFetch(currentUrl);
+        }
+      };
+
       const openCloaked = () => {
-        const url = input.value.trim();
+        const url = urlBar.value.trim();
         if (!url) return;
+        const normalized = normalizeUrl(url);
+        if (!normalized) return;
+        
         const w = window.open('about:blank');
         if (!w) {
           alert('Pop-up blocked. Allow pop-ups for this site.');
@@ -260,23 +390,40 @@ function getCloakedApp() {
           <html>
           <head><title>Google Classroom</title></head>
           <body style="margin:0;overflow:hidden;">
-            <iframe src="\${window.location.origin}/?cloak=launch&url=\${encodeURIComponent(url)}" 
+            <iframe src="\${window.location.origin}/?cloak=launch&url=\${encodeURIComponent(normalized)}" 
                     style="width:100%;height:100%;border:none;">
             </iframe>
           </body>
           </html>
         \`);
         w.document.close();
-        // The parent tab stays on about:blank with no history entry
       };
 
-      goBtn.addEventListener('click', loadUrl);
-      cloakBtn.addEventListener('click', openCloaked);
-      input.addEventListener('keydown', (e) => {
+      // Handle Enter key in URL bar
+      urlBar.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') loadUrl();
       });
 
-      input.value = 'example.com';
+      // Click handlers
+      goBtn.addEventListener('click', loadUrl);
+      cloakBtn.addEventListener('click', openCloaked);
+      backBtn.addEventListener('click', goBack);
+      forwardBtn.addEventListener('click', goForward);
+      refreshBtn.addEventListener('click', refresh);
+
+      // Listen for clicks inside iframe that need to update the URL bar
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'navigate') {
+          const normalized = normalizeUrl(e.data.url);
+          if (normalized) {
+            urlBar.value = normalized;
+            proxyFetch(normalized);
+          }
+        }
+      });
+
+      // Load default page
+      urlBar.value = 'example.com';
       setTimeout(loadUrl, 300);
     })();
   </script>
