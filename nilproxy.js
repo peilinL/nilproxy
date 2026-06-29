@@ -1,456 +1,255 @@
-const http = require("node:http");
-const https = require("node:https");
-const net = require("node:net");
-const dns = require("node:dns/promises");
-const { URL } = require("node:url");
+// worker.js - Cloudflare Worker with ES Module format
 
-const host = process.env.HOST || "127.0.0.1";
-const port = parsePositiveInteger(process.env.PORT || "8787", "PORT");
-const token = process.env.PROXY_TOKEN || "";
-const corsOrigin = process.env.CORS_ORIGIN || "*";
-const publicBaseUrl = readPublicBaseUrl();
-const allowedHosts = new Set(
-  (process.env.ALLOWED_HOSTS || "")
-    .split(",")
-    .map(value => value.trim().toLowerCase())
-    .filter(Boolean)
-);
-const allowedMethods = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
-const hopByHopHeaders = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "host",
-  "origin",
-  "referer"
-]);
-const maxBodyBytes = parsePositiveInteger(process.env.MAX_BODY_BYTES || `${5 * 1024 * 1024}`, "MAX_BODY_BYTES");
-const timeoutMs = parsePositiveInteger(process.env.TIMEOUT_MS || "15000", "TIMEOUT_MS");
-
-function parsePositiveInteger(value, name) {
-  const number = Number(value);
-
-  if (!Number.isSafeInteger(number) || number <= 0) {
-    console.error(`${name} must be a positive integer`);
-    process.exit(1);
-  }
-
-  return number;
-}
-
-function createHttpError(message, statusCode) {
-  return Object.assign(new Error(message), { statusCode });
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function safeFileName(value) {
-  const normalized = String(value || "website")
-    .trim()
-    .replace(/^https?:\/\//i, "")
-    .replace(/^www\./i, "")
-    .replace(/[^a-z0-9._-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-
-  return normalized || "website";
-}
-
-function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(body),
-    "access-control-allow-origin": corsOrigin,
-    "access-control-allow-methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-proxy-token",
-    "access-control-max-age": "600",
-    "vary": "origin"
-  });
-  res.end(res.skipBody ? undefined : body);
-}
-
-function sendHtml(res, statusCode, body, headers = {}) {
-  res.writeHead(statusCode, {
-    "content-type": "text/html; charset=utf-8",
-    "content-length": Buffer.byteLength(body),
-    "access-control-allow-origin": corsOrigin,
-    "referrer-policy": "no-referrer",
-    "x-content-type-options": "nosniff",
-    ...headers
-  });
-  res.end(res.skipBody ? undefined : body);
-}
-
-function sendNoContent(res) {
-  res.writeHead(204, {
-    "access-control-allow-origin": corsOrigin,
-    "access-control-allow-methods": "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-proxy-token",
-    "access-control-max-age": "600",
-    "vary": "origin"
-  });
-  res.end();
-}
-
-function parsePublicUrl(rawTarget) {
-  let target;
-
-  try {
-    target = new URL(rawTarget);
-  } catch {
-    throw createHttpError("Invalid URL", 400);
-  }
-
-  if (!["http:", "https:"].includes(target.protocol)) {
-    throw createHttpError("Only http and https URLs are supported", 400);
-  }
-
-  return target;
-}
-
-function normalizePublicBaseUrl(rawUrl) {
-  if (!rawUrl) return "";
-
-  const url = parsePublicUrl(rawUrl);
-  url.pathname = "/";
-  url.search = "";
-  url.hash = "";
-
-  return url.href;
-}
-
-function readPublicBaseUrl() {
-  try {
-    return normalizePublicBaseUrl(process.env.PUBLIC_BASE_URL || "");
-  } catch (error) {
-    console.error(`PUBLIC_BASE_URL is invalid: ${error.message}`);
-    process.exit(1);
-  }
-}
-
-function publicAppUrl(req) {
-  if (publicBaseUrl) {
-    return publicBaseUrl;
-  }
-
-  return `http://${req.headers.host || `${host}:${port}`}/`;
-}
-
-function buildChromebookFile(target, title) {
-  const pageTitle = escapeHtml(title || target.hostname);
-  const href = escapeHtml(target.href);
-
-  return `<!doctype html>
+const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="0; url=${href}">
-<title>${pageTitle}</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unblocked Browser</title>
 <style>
-html,body{height:100%;margin:0}
-body{display:grid;place-items:center;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#0f172a}
-a{color:#0f766e}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: system-ui, sans-serif; background:#0a0a0f; color:#e0e0e0; height:100vh; display:flex; flex-direction:column; }
+#toolbar { background:#1a1a2e; padding:12px 20px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #333; flex-shrink:0; flex-wrap:wrap; }
+#url-input { flex:1; min-width:200px; padding:10px 16px; background:#2a2a40; border:1px solid #444; border-radius:8px; color:#fff; font-size:16px; outline:none; }
+#url-input:focus { border-color:#6c63ff; }
+#go-btn, #shorten-btn { padding:10px 20px; border:none; border-radius:8px; color:#fff; font-weight:600; cursor:pointer; font-size:16px; }
+#go-btn { background:#6c63ff; }
+#go-btn:hover { background:#7b73ff; }
+#shorten-btn { background:#2a2a4a; }
+#shorten-btn:hover { background:#3a3a5a; }
+#frame-container { flex:1; position:relative; background:#111; }
+#content-frame { width:100%; height:100%; border:none; background:#fff; }
+#loading { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#6c63ff; font-size:18px; }
+#shortened-display { display:none; margin-top:8px; padding:8px 14px; background:#1a1a2e; border-radius:6px; border:1px solid #444; width:100%; word-break:break-all; }
+#shortened-display a { color:#6c63ff; text-decoration:none; }
+#shortened-display a:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
-<main>
-<p>Opening <a href="${href}" rel="noopener noreferrer">${href}</a></p>
-</main>
-</body>
-</html>`;
-}
+<div id="toolbar">
+<input id="url-input" type="text" placeholder="Enter URL" spellcheck="false">
+<button id="go-btn">Go</button>
+<button id="shorten-btn">Shorten</button>
+<div id="shortened-display"></div>
+</div>
+<div id="frame-container">
+<iframe id="content-frame" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+<div id="loading">Loading...</div>
+</div>
+<script>
+(function() {
+  const frame = document.getElementById('content-frame');
+  const input = document.getElementById('url-input');
+  const goBtn = document.getElementById('go-btn');
+  const shortenBtn = document.getElementById('shorten-btn');
+  const loading = document.getElementById('loading');
+  const display = document.getElementById('shortened-display');
 
-function buildHomePage(appUrl) {
-  const escapedAppUrl = escapeHtml(appUrl);
-  const publicUrlBlock = publicBaseUrl
-    ? `<p>Public app URL: <a href="${escapedAppUrl}" rel="noopener noreferrer">${escapedAppUrl}</a></p>`
-    : "";
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Chromebook URL File Maker</title>
-<style>
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#0f172a}
-main{width:min(720px,100%)}
-h1{font-size:28px;line-height:1.1;margin:0 0 18px}
-form{display:grid;gap:12px}
-label{font-weight:650}
-input{width:100%;border:1px solid #94a3b8;border-radius:8px;padding:12px 14px;font:inherit;background:white;color:#0f172a}
-button{width:max-content;border:0;border-radius:8px;padding:11px 16px;font:700 15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f766e;color:white;cursor:pointer}
-button:hover{background:#115e59}
-p{color:#475569;line-height:1.5}
-a{color:#0f766e}
-</style>
-</head>
-<body>
-<main>
-<h1>Chromebook URL File Maker</h1>
-<form action="/chromebook-file" method="get">
-<label for="url">Paste any website URL</label>
-<input id="url" name="url" type="url" placeholder="https://example.com" required>
-<input name="title" type="text" placeholder="Optional file name">
-<button type="submit">Download file</button>
-</form>
-<p>The downloaded HTML file can live in your Chromebook Files app and opens the pasted URL in Chrome.</p>
-${publicUrlBlock}
-</main>
-</body>
-</html>`;
-}
-
-function isPrivateAddress(address) {
-  if (net.isIPv4(address)) {
-    const parts = address.split(".").map(Number);
-    return parts[0] === 10 ||
-      parts[0] === 127 ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 169 && parts[1] === 254) ||
-      parts[0] === 0;
-  }
-
-  if (net.isIPv6(address)) {
-    const normalized = address.toLowerCase();
-    return normalized === "::1" ||
-      normalized === "::" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe80:");
-  }
-
-  return true;
-}
-
-function authorize(req) {
-  if (!token) return true;
-  const authorization = req.headers.authorization || "";
-  return authorization === `Bearer ${token}` || req.headers["x-proxy-token"] === token;
-}
-
-function cleanRequestHeaders(headers, target) {
-  const nextHeaders = {};
-
-  for (const [name, value] of Object.entries(headers)) {
-    const lowerName = name.toLowerCase();
-    if (!hopByHopHeaders.has(lowerName) && value !== undefined) {
-      nextHeaders[name] = value;
+  const proxyFetch = async (targetUrl) => {
+    loading.style.display = 'block';
+    try {
+      const response = await fetch('/proxy?url=' + encodeURIComponent(targetUrl));
+      const html = await response.text();
+      const rewritten = html.replace(
+        /(href|src|action)=["']([^"']*)["']/gi,
+        (match, attr, value) => {
+          if (value.startsWith('http') || value.startsWith('//')) {
+            const full = value.startsWith('//') ? 'https:' + value : value;
+            return attr + '="/proxy?url=' + encodeURIComponent(full) + '"';
+          } else if (value.startsWith('/')) {
+            const base = new URL(targetUrl).origin;
+            return attr + '="/proxy?url=' + encodeURIComponent(base + value) + '"';
+          } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
+            const base = new URL(targetUrl).origin;
+            const fixed = value.startsWith('./') ? value.slice(1) : value;
+            return attr + '="/proxy?url=' + encodeURIComponent(base + '/' + fixed) + '"';
+          }
+          return match;
+        }
+      );
+      frame.srcdoc = rewritten;
+    } catch (err) {
+      frame.srcdoc = '<h1 style="color:red;padding:40px;">Error: ' + err.message + '</h1>';
+    } finally {
+      loading.style.display = 'none';
     }
-  }
-
-  nextHeaders.host = target.host;
-  nextHeaders["x-forwarded-host"] = headers.host || "";
-  nextHeaders["x-forwarded-proto"] = headers["x-forwarded-proto"] || "http";
-
-  return nextHeaders;
-}
-
-function cleanResponseHeaders(headers) {
-  const nextHeaders = {
-    "access-control-allow-origin": corsOrigin,
-    "access-control-expose-headers": "*",
-    "vary": "origin"
   };
 
-  for (const [name, value] of Object.entries(headers)) {
-    if (!hopByHopHeaders.has(name.toLowerCase()) && value !== undefined) {
-      nextHeaders[name] = value;
-    }
-  }
-
-  return nextHeaders;
-}
-
-async function validateTarget(rawTarget) {
-  let target;
-
-  try {
-    target = new URL(rawTarget);
-  } catch {
-    throw createHttpError("Invalid target URL", 400);
-  }
-
-  if (!["http:", "https:"].includes(target.protocol)) {
-    throw createHttpError("Only http and https targets are allowed", 400);
-  }
-
-  const hostname = target.hostname.toLowerCase();
-
-  if (allowedHosts.size === 0) {
-    throw createHttpError("Set ALLOWED_HOSTS before starting the proxy", 500);
-  }
-
-  if (!allowedHosts.has(hostname)) {
-    throw createHttpError("Target host is not allowed", 403);
-  }
-
-  const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
-  const blocksPrivateNetworks = process.env.ALLOW_PRIVATE_NETWORKS !== "true";
-
-  if (blocksPrivateNetworks && addresses.some(entry => isPrivateAddress(entry.address))) {
-    throw createHttpError("Target resolves to a private network address", 403);
-  }
-
-  return target;
-}
-
-function readLimitedBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let total = 0;
-
-    req.on("data", chunk => {
-      total += chunk.length;
-
-      if (total > maxBodyBytes) {
-        reject(createHttpError("Request body is too large", 413));
-        req.destroy();
-        return;
-      }
-
-      chunks.push(chunk);
-    });
-
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
-async function proxy(req, res, target) {
-  const body = ["GET", "HEAD"].includes(req.method) ? null : await readLimitedBody(req);
-  const transport = target.protocol === "https:" ? https : http;
-
-  const options = {
-    protocol: target.protocol,
-    hostname: target.hostname,
-    port: target.port || (target.protocol === "https:" ? 443 : 80),
-    method: req.method,
-    path: `${target.pathname}${target.search}`,
-    headers: cleanRequestHeaders(req.headers, target),
-    timeout: timeoutMs
-  };
-
-  const upstream = transport.request(options, upstreamRes => {
-    res.writeHead(upstreamRes.statusCode || 502, cleanResponseHeaders(upstreamRes.headers));
-    upstreamRes.pipe(res);
-  });
-
-  upstream.on("timeout", () => upstream.destroy(createHttpError("Upstream timed out", 504)));
-  upstream.on("error", error => {
-    if (!res.headersSent) {
-      sendJson(res, error.statusCode || 502, { error: error.message || "Proxy request failed" });
-    } else {
-      res.destroy(error);
-    }
-  });
-
-  if (body && body.length > 0) {
-    upstream.end(body);
-  } else {
-    upstream.end();
-  }
-}
-
-const server = http.createServer(async (req, res) => {
-  res.skipBody = req.method === "HEAD";
-
-  try {
-    if (req.method === "OPTIONS") {
-      sendNoContent(res);
-      return;
-    }
-
-    if (req.url === "/health") {
-      sendJson(res, 200, { ok: true });
-      return;
-    }
-
-    if (!allowedMethods.has(req.method)) {
-      sendJson(res, 405, { error: "Method not allowed" });
-      return;
-    }
-
-    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-
-    if (requestUrl.pathname === "/") {
-      sendHtml(res, 200, buildHomePage(publicAppUrl(req)));
-      return;
-    }
-
-    if (requestUrl.pathname === "/chromebook-file") {
-      const rawTarget = requestUrl.searchParams.get("url");
-
-      if (!rawTarget) {
-        sendJson(res, 400, { error: "Missing url parameter" });
-        return;
-      }
-
-      const target = parsePublicUrl(rawTarget);
-      const title = requestUrl.searchParams.get("title") || target.hostname;
-      const body = buildChromebookFile(target, title);
-      const filename = `${safeFileName(title || target.hostname)}.html`;
-
-      sendHtml(res, 200, body, {
-        "content-disposition": `attachment; filename="${filename}"`,
-        "x-content-type-options": "nosniff"
+  const shortenUrl = async (longUrl) => {
+    try {
+      const response = await fetch('/shorten', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: longUrl })
       });
-      return;
+      const data = await response.json();
+      if (data.short) {
+        const full = window.location.origin + '/' + data.short;
+        display.innerHTML = 'Shortened: <a href="' + full + '" target="_blank">' + full + '</a>';
+        display.style.display = 'block';
+      } else {
+        display.innerHTML = 'Error: ' + (data.error || 'unknown');
+        display.style.display = 'block';
+      }
+    } catch (err) {
+      display.innerHTML = 'Error: ' + err.message;
+      display.style.display = 'block';
     }
+  };
 
-    if (!authorize(req)) {
-      sendJson(res, 401, { error: "Unauthorized" });
-      return;
-    }
+  goBtn.addEventListener('click', () => {
+    let url = input.value.trim();
+    if (!url) return;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+    proxyFetch(url);
+    display.style.display = 'none';
+  });
 
-    if (requestUrl.pathname !== "/proxy") {
-      sendJson(res, 404, { error: "Use / or /proxy?url=https://allowed.example/path" });
-      return;
-    }
+  shortenBtn.addEventListener('click', () => {
+    let url = input.value.trim();
+    if (!url) return;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+    shortenUrl(url);
+  });
 
-    const rawTarget = requestUrl.searchParams.get("url");
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') goBtn.click();
+  });
 
-    if (!rawTarget) {
-      sendJson(res, 400, { error: "Missing url parameter" });
-      return;
-    }
-
-    const target = await validateTarget(rawTarget);
-    await proxy(req, res, target);
-  } catch (error) {
-    if (!res.headersSent) {
-      sendJson(res, error.statusCode || 500, { error: error.message || "Unexpected proxy error" });
-    } else {
-      res.destroy(error);
-    }
+  if (window.location.pathname.length > 1 && window.location.pathname !== '/') {
+    const slug = window.location.pathname.slice(1);
+    fetch('/resolve/' + slug)
+      .then(res => res.json())
+      .then(data => {
+        if (data.url) {
+          input.value = data.url;
+          proxyFetch(data.url);
+          history.replaceState(null, '', '/');
+        }
+      })
+      .catch(() => {});
   }
-});
 
-server.on("error", error => {
-  console.error(`server failed to start: ${error.message}`);
-  process.exitCode = 1;
-});
+  input.value = 'https://example.com';
+  setTimeout(() => goBtn.click(), 300);
+})();
+</script>
+</body>
+</html>`;
 
-server.listen(port, host, () => {
-  const hosts = [...allowedHosts].join(", ") || "none";
-  console.log(`secure proxy listening on http://${host}:${port}`);
-  if (publicBaseUrl) console.log(`public URL: ${publicAppUrl({ headers: {} })}`);
-  console.log(`allowed hosts: ${hosts}`);
-  console.log(`auth: ${token ? "enabled" : "disabled"}`);
-});
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (path === '/' || path === '/index.html') {
+      return new Response(HTML_TEMPLATE, {
+        headers: { 
+          'Content-Type': 'text/html', 
+          'Cache-Control': 'public, max-age=86400' 
+        }
+      });
+    }
+
+    if (path === '/proxy') {
+      const target = url.searchParams.get('url');
+      if (!target) {
+        return new Response('Missing url parameter', { status: 400 });
+      }
+
+      try {
+        const targetUrl = new URL(target);
+        const response = await fetch(target, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': targetUrl.origin
+          }
+        });
+
+        const contentType = response.headers.get('content-type') || 'text/html';
+        
+        if (contentType.includes('text/html')) {
+          const html = await response.text();
+          const rewritten = html.replace(
+            /(href|src|action)=["']([^"']*)["']/gi,
+            (match, attr, value) => {
+              if (value.startsWith('http') || value.startsWith('//')) {
+                const full = value.startsWith('//') ? 'https:' + value : value;
+                return attr + '="/proxy?url=' + encodeURIComponent(full) + '"';
+              } else if (value.startsWith('/')) {
+                return attr + '="/proxy?url=' + encodeURIComponent(targetUrl.origin + value) + '"';
+              } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
+                const fixed = value.startsWith('./') ? value.slice(1) : value;
+                return attr + '="/proxy?url=' + encodeURIComponent(targetUrl.origin + '/' + fixed) + '"';
+              }
+              return match;
+            }
+          );
+          return new Response(rewritten, {
+            headers: { 
+              'Content-Type': 'text/html', 
+              'Cache-Control': 'no-cache' 
+            }
+          });
+        }
+
+        const buffer = await response.arrayBuffer();
+        return new Response(buffer, {
+          headers: { 'Content-Type': contentType }
+        });
+      } catch (error) {
+        return new Response('Proxy error: ' + error.message, { status: 500 });
+      }
+    }
+
+    if (path === '/shorten' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const longUrl = body.url;
+        if (!longUrl) {
+          return new Response(JSON.stringify({ error: 'Missing url' }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const slug = Math.random().toString(36).substring(2, 8);
+        await env.KV.put(slug, longUrl);
+        return new Response(JSON.stringify({ short: slug }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    if (path.startsWith('/resolve/')) {
+      const slug = path.slice(9);
+      const longUrl = await env.KV.get(slug);
+      if (longUrl) {
+        return new Response(JSON.stringify({ url: longUrl }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+    }
+
+    const slug = path.slice(1);
+    if (slug && slug.length > 0 && slug.length < 20) {
+      const longUrl = await env.KV.get(slug);
+      if (longUrl) {
+        return new Response(HTML_TEMPLATE, {
+          headers: { 'Content-Type': 'text/html' }
+        });
+      }
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+};
