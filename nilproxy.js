@@ -5,7 +5,7 @@ export default {
 
     if (path === '/' || path === '/index.html') {
       return new Response(getHTML(), {
-        headers: { 
+        headers: { `  `
           'Content-Type': 'text/html',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
@@ -13,6 +13,13 @@ export default {
     }
 
     if (path === '/proxy') {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders()
+        });
+      }
+
       return proxyRequest(url, env);
     }
 
@@ -20,12 +27,21 @@ export default {
   }
 };
 
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,HEAD,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '600'
+  };
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
+      ...corsHeaders()
     }
   });
 }
@@ -72,17 +88,16 @@ async function proxyRequest(url, env) {
     return json({ error: 'This host is not in ALLOWED_HOSTS.' }, 403);
   }
 
-  const upstream = await fetch(target.href, {
-    headers: {
-      'User-Agent': 'nilproxy/1.0'
-    },
-    redirect: 'follow'
-  });
+  const upstream = await fetch(target.href, { redirect: 'follow' });
   const headers = new Headers(upstream.headers);
 
-  headers.set('Access-Control-Allow-Origin', '*');
+  for (const [name, value] of Object.entries(corsHeaders())) {
+    headers.set(name, value);
+  }
+
   headers.delete('Content-Security-Policy');
   headers.delete('X-Frame-Options');
+  headers.delete('Frame-Options');
 
   return new Response(upstream.body, {
     status: upstream.status,
@@ -349,11 +364,11 @@ function getHTML() {
 
   <div id="export-panel">
     <div class="panel-title">📦 Export Options</div>
-    <label>📄 File Name (without .html)</label>
+    <label>📄 Launcher File Name (without .html)</label>
     <input id="file-name-input" type="text" placeholder="my_page">
-    <label>🏷️ Tab Title</label>
+    <label>🏷️ Launcher Tab Name</label>
     <input id="tab-title-input" type="text" placeholder="My Custom Tab">
-    <label>🔗 URL to Open (optional)</label>
+    <label>🔗 URL to Open</label>
     <input id="tab-url-input" type="text" placeholder="https://example.com">
     <div class="actions">
       <button class="save-btn" id="save-file-btn" type="button">💾 Save File</button>
@@ -414,7 +429,66 @@ function getHTML() {
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
 
-      const proxyFetch = async (targetUrl) => {
+      const proxyUrlFor = (targetUrl) => CORS_PROXY + encodeURIComponent(targetUrl);
+
+      const proxiedAttribute = (attr, value, targetUrl) => {
+        const trimmed = value.trim();
+
+        if (
+          !trimmed ||
+          trimmed.startsWith('#') ||
+          trimmed.startsWith('javascript:') ||
+          trimmed.startsWith('data:') ||
+          trimmed.startsWith('mailto:') ||
+          trimmed.startsWith('tel:')
+        ) {
+          return attr + '="' + escapeHTML(value) + '"';
+        }
+
+        try {
+          return attr + '="' + proxyUrlFor(new URL(trimmed, targetUrl).href) + '"';
+        } catch {
+          return attr + '="' + escapeHTML(value) + '"';
+        }
+      };
+
+      const showFrameError = (message) => {
+        frame.srcdoc = '<div style="color:#f87171;background:#111827;min-height:100%;padding:40px;font-family:system-ui;font-size:16px;line-height:1.5;">' + escapeHTML(message) + '</div>';
+      };
+
+      const safeFilename = (value) => {
+        const normalized = String(value || 'website')
+          .trim()
+          .replace(/^https?:\\/\\//i, '')
+          .replace(/^www\\./i, '')
+          .replace(/[^a-z0-9._-]+/gi, '_')
+          .replace(/^_+|_+$/g, '')
+          .substring(0, 70);
+
+        return normalized || 'website';
+      };
+
+      const buildChromebookFile = (targetUrl, title) => {
+        const safeTitle = escapeHTML(title || new URL(targetUrl).hostname || 'Website');
+        const safeUrl = escapeHTML(targetUrl);
+
+        return '<!doctype html>\\n' +
+          '<html lang="en">\\n' +
+          '<head>\\n' +
+          '<meta charset="utf-8">\\n' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1">\\n' +
+          '<title>' + safeTitle + '</title>\\n' +
+          '<style>html,body{height:100%;margin:0;background:#fff}iframe{width:100%;height:100%;border:0}main{display:none;font:16px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;padding:24px;color:#0f172a}a{color:#4f46e5;overflow-wrap:anywhere}@supports not (display:grid){main{display:block}}</style>\\n' +
+          '</head>\\n' +
+          '<body>\\n' +
+          '<iframe src="' + safeUrl + '" referrerpolicy="no-referrer"></iframe>\\n' +
+          '<main><p>Open <a href="' + safeUrl + '" rel="noopener noreferrer">' + safeUrl + '</a></p></main>\\n' +
+          '</body>\\n' +
+          '</html>';
+      };
+
+      const proxyFetch = async (targetUrl, options = {}) => {
+        const pushHistory = options.pushHistory !== false;
         console.log('proxyFetch called with:', targetUrl);
         if (!targetUrl) return;
         
@@ -422,7 +496,7 @@ function getHTML() {
         currentUrlDisplay.textContent = 'Loading: ' + targetUrl;
         
         try {
-          const proxyUrl = CORS_PROXY + encodeURIComponent(targetUrl);
+          const proxyUrl = proxyUrlFor(targetUrl);
           console.log('Fetching from proxy:', proxyUrl);
           
           const response = await fetch(proxyUrl);
@@ -447,18 +521,7 @@ function getHTML() {
           const rewritten = html.replace(
             /(href|src|action)=["']([^"']*)["']/gi,
             (match, attr, value) => {
-              if (value.startsWith('http') || value.startsWith('//')) {
-                const full = value.startsWith('//') ? 'https:' + value : value;
-                return attr + '="' + CORS_PROXY + encodeURIComponent(full) + '"';
-              } else if (value.startsWith('/')) {
-                const base = new URL(targetUrl).origin;
-                return attr + '="' + CORS_PROXY + encodeURIComponent(base + value) + '"';
-              } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
-                const base = new URL(targetUrl).origin;
-                const fixed = value.startsWith('./') ? value.slice(1) : value;
-                return attr + '="' + CORS_PROXY + encodeURIComponent(base + '/' + fixed) + '"';
-              }
-              return match;
+              return proxiedAttribute(attr, value, targetUrl);
             }
           );
           
@@ -473,11 +536,17 @@ function getHTML() {
           tabTitleInput.value = currentPageTitle;
           tabUrlInput.value = targetUrl;
           
-          if (historyIndex < historyStack.length - 1) {
-            historyStack = historyStack.slice(0, historyIndex + 1);
+          if (pushHistory) {
+            if (historyIndex < historyStack.length - 1) {
+              historyStack = historyStack.slice(0, historyIndex + 1);
+            }
+
+            if (historyStack[historyStack.length - 1] !== targetUrl) {
+              historyStack.push(targetUrl);
+            }
+
+            historyIndex = historyStack.length - 1;
           }
-          historyStack.push(targetUrl);
-          historyIndex = historyStack.length - 1;
           
           console.log('Page loaded successfully');
           
@@ -485,34 +554,49 @@ function getHTML() {
           console.error('proxyFetch error:', err);
           currentHtml = '';
           currentPageTitle = 'Error';
-          frame.srcdoc = '<div style="color:red;padding:40px;font-family:system-ui;font-size:16px;">Error: ' + err.message + '</div>';
+          showFrameError('Error: ' + err.message);
           currentUrlDisplay.textContent = 'Error: ' + err.message;
         } finally {
           loading.style.display = 'none';
         }
       };
 
-      const downloadCurrentPage = (filename) => {
-        if (!currentHtml) {
-          alert('No page loaded. Load a URL first.');
+      const downloadChromebookFile = (filename, urlToOpen, title) => {
+        const normalized = normalizeUrl(urlToOpen || currentUrl || urlBar.value);
+
+        if (!normalized) {
+          alert('Enter a valid http or https URL to export.');
           return;
         }
 
-        const safeFilename = (filename || currentPageTitle || 'page')
-          .replace(/[^a-z0-9]/gi, '_')
-          .substring(0, 50) || 'downloaded_page';
-        
-        const blob = new Blob([currentHtml], { type: 'text/html;charset=utf-8' });
+        let target;
+
+        try {
+          target = new URL(normalized);
+        } catch {
+          alert('Enter a valid http or https URL to export.');
+          return;
+        }
+
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+          alert('Enter a valid http or https URL to export.');
+          return;
+        }
+
+        const finalTitle = title || currentPageTitle || target.hostname || 'Website';
+        const finalFilename = safeFilename(filename || finalTitle || normalized);
+        const html = buildChromebookFile(target.href, finalTitle);
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = safeFilename + '.html';
+        a.download = finalFilename + '.html';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         
-        currentUrlDisplay.textContent = 'Downloaded: ' + safeFilename + '.html';
+        currentUrlDisplay.textContent = 'Downloaded Chromebook file: ' + finalFilename + '.html';
       };
 
       const openAsTab = (title, urlToOpen) => {
@@ -521,48 +605,16 @@ function getHTML() {
           return;
         }
 
-        let finalTitle = title || currentPageTitle || 'New Tab';
-        let finalUrl = urlToOpen || currentUrl || '';
+        const finalTitle = title || currentPageTitle || 'New Tab';
+        const finalUrl = normalizeUrl(urlToOpen || currentUrl || '');
+        const params = new URLSearchParams({ url: finalUrl || '', title: finalTitle });
+        const w = finalUrl ? window.open(window.location.origin + '/?' + params.toString(), '_blank') : null;
 
-        if (urlToOpen && urlToOpen !== currentUrl) {
-          const w = window.open('about:blank');
-          if (!w) {
-            alert('Pop-up blocked. Allow pop-ups for this site.');
-            return;
-          }
-          w.document.write(\`
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <title>\${escapeHTML(finalTitle)}</title>
-              <style>
-                body { margin:0; overflow:hidden; background:#0a0a0f; }
-                iframe { width:100%; height:100%; border:none; }
-              </style>
-            </head>
-            <body>
-              <iframe src="\${window.location.origin}/?url=\${encodeURIComponent(urlToOpen)}"></iframe>
-            </body>
-            </html>
-          \`);
-          w.document.close();
-          return;
-        }
-
-        const w = window.open('about:blank');
         if (!w) {
           alert('Pop-up blocked. Allow pop-ups for this site.');
           return;
         }
-        
-        const customHtml = currentHtml.replace(
-          /<title[^>]*>([^<]*)<\/title>/i,
-          '<title>' + escapeHTML(finalTitle) + '</title>'
-        );
-        
-        w.document.write(customHtml);
-        w.document.close();
-        
+
         currentUrlDisplay.textContent = 'Opened as tab: ' + finalTitle;
       };
 
@@ -596,7 +648,7 @@ function getHTML() {
           historyIndex--;
           const url = historyStack[historyIndex];
           urlBar.value = url;
-          proxyFetch(url);
+          proxyFetch(url, { pushHistory: false });
         }
       };
 
@@ -605,13 +657,13 @@ function getHTML() {
           historyIndex++;
           const url = historyStack[historyIndex];
           urlBar.value = url;
-          proxyFetch(url);
+          proxyFetch(url, { pushHistory: false });
         }
       };
 
       const refresh = () => {
         if (currentUrl) {
-          proxyFetch(currentUrl);
+          proxyFetch(currentUrl, { pushHistory: false });
         }
       };
 
@@ -621,26 +673,14 @@ function getHTML() {
         const normalized = normalizeUrl(url);
         if (!normalized) return;
         
-        const w = window.open('about:blank');
+        const launchTitle = tabTitleInput.value.trim() || currentPageTitle || document.title || 'New Tab';
+        const params = new URLSearchParams({ url: normalized, title: launchTitle });
+        const launchUrl = window.location.origin + '/?' + params.toString();
+        const w = window.open(launchUrl, '_blank');
         if (!w) {
           alert('Pop-up blocked. Allow pop-ups for this site.');
           return;
         }
-        w.document.write(\`
-          <!DOCTYPE html>
-          <html>
-          <head><title></title></head>
-          <body style="margin:0;overflow:hidden;">
-            <iframe src="\${window.location.origin}/" 
-                    style="width:100%;height:100%;border:none;">
-            </iframe>
-          </body>
-          </html>
-        \`);
-        w.document.close();
-        setTimeout(() => {
-          w.postMessage({ type: 'navigate', url: normalized }, '*');
-        }, 500);
       };
 
       const toggleExportPanel = () => {
@@ -700,7 +740,9 @@ function getHTML() {
       saveFileBtn.addEventListener('click', function(e) {
         console.log('saveFileBtn clicked');
         const filename = fileNameInput.value.trim() || currentPageTitle || 'page';
-        downloadCurrentPage(filename);
+        const title = tabTitleInput.value.trim() || currentPageTitle || 'Website';
+        const url = tabUrlInput.value.trim() || currentUrl || urlBar.value.trim();
+        downloadChromebookFile(filename, url, title);
         exportPanel.classList.remove('show');
       });
 
@@ -737,7 +779,13 @@ function getHTML() {
 
       console.log('All event listeners set up');
       
-      const startupUrl = new URLSearchParams(window.location.search).get('url') || 'example.com';
+      const startupParams = new URLSearchParams(window.location.search);
+      const startupTitle = startupParams.get('title');
+      if (startupTitle) {
+        document.title = startupTitle;
+      }
+
+      const startupUrl = startupParams.get('url') || 'example.com';
       urlBar.value = startupUrl;
       console.log('Loading startup page:', startupUrl);
       setTimeout(loadUrl, 500);
