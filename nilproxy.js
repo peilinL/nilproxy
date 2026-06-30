@@ -382,7 +382,7 @@ function getHTML() {
     <input id="url-bar" type="text" placeholder="Enter URL" spellcheck="false" autofocus>
     <button id="go-btn" class="primary" type="button">Go</button>
     <button id="export-btn" class="export" type="button">📦 Export</button>
-    <button id="cloak-btn" type="button">🛡️ Cloak</button>
+    <button id="cloak-btn" type="button">↗ Open Launcher</button>
     <button id="back-btn" type="button">←</button>
     <button id="forward-btn" type="button">→</button>
     <button id="refresh-btn" type="button">↻</button>
@@ -458,6 +458,16 @@ function getHTML() {
         .replaceAll("'", '&#39;');
 
       const proxyUrlFor = (targetUrl) => CORS_PROXY + encodeURIComponent(targetUrl);
+
+      const appUrlFor = (targetUrl, title) => {
+        const params = new URLSearchParams({ url: targetUrl });
+
+        if (title) {
+          params.set('title', title);
+        }
+
+        return window.location.origin + '/?' + params.toString();
+      };
 
       const proxiedAttribute = (attr, value, targetUrl) => {
         const trimmed = value.trim();
@@ -695,8 +705,7 @@ function getHTML() {
 
         const finalTitle = title || currentPageTitle || 'New Tab';
         const finalUrl = normalizeUrl(urlToOpen || currentUrl || '');
-        const params = new URLSearchParams({ url: finalUrl || '', title: finalTitle });
-        const w = finalUrl ? window.open(window.location.origin + '/?' + params.toString(), '_blank') : null;
+        const w = finalUrl ? window.open(appUrlFor(finalUrl, finalTitle), '_blank') : null;
 
         if (!w) {
           alert('Pop-up blocked. Allow pop-ups for this site.');
@@ -756,19 +765,24 @@ function getHTML() {
       };
 
       const openCloaked = () => {
-        const url = urlBar.value.trim();
-        if (!url) return;
-        const normalized = normalizeUrl(url);
-        if (!normalized) return;
+        const normalized = normalizeUrl(currentUrl || urlBar.value.trim());
+
+        if (!normalized) {
+          alert('Enter a URL first.');
+          return;
+        }
         
-        const launchTitle = tabTitleInput.value.trim() || currentPageTitle || document.title || 'New Tab';
-        const params = new URLSearchParams({ url: normalized, title: launchTitle });
-        const launchUrl = window.location.origin + '/?' + params.toString();
-        const w = window.open(launchUrl, '_blank');
+        const launchTitle = tabTitleInput.value.trim() || currentPageTitle || document.title || 'Launcher';
+        const launchUrl = appUrlFor(normalized, launchTitle);
+        const w = window.open('', '_blank');
+
         if (!w) {
           alert('Pop-up blocked. Allow pop-ups for this site.');
           return;
         }
+
+        w.location.href = launchUrl;
+        currentUrlDisplay.textContent = 'Opened launcher: ' + normalized;
       };
 
       const toggleExportPanel = () => {
