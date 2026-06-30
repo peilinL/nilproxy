@@ -5,7 +5,7 @@ export default {
 
     if (path === '/' || path === '/index.html') {
       return new Response(getHTML(), {
-        headers: { `  `
+        headers: {
           'Content-Type': 'text/html',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
@@ -56,10 +56,11 @@ function allowedHosts(env) {
 }
 
 function parseTarget(rawUrl) {
+  const normalizedUrl = normalizeTargetUrl(rawUrl);
   let target;
 
   try {
-    target = new URL(rawUrl);
+    target = new URL(normalizedUrl);
   } catch {
     return null;
   }
@@ -69,6 +70,24 @@ function parseTarget(rawUrl) {
   }
 
   return target;
+}
+
+function normalizeTargetUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+
+  if (!value) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+    return value;
+  }
+
+  return `https://${value}`;
 }
 
 async function proxyRequest(url, env) {
@@ -271,6 +290,13 @@ function getHTML() {
     #export-panel .actions .save-btn:hover {
       background: #3aa85e;
     }
+    #export-panel .actions .private-btn {
+      background: #0f766e;
+      color: white;
+    }
+    #export-panel .actions .private-btn:hover {
+      background: #11998a;
+    }
     #export-panel .actions .tab-btn {
       background: #6c63ff;
       color: white;
@@ -367,11 +393,12 @@ function getHTML() {
     <label>📄 Launcher File Name (without .html)</label>
     <input id="file-name-input" type="text" placeholder="my_page">
     <label>🏷️ Launcher Tab Name</label>
-    <input id="tab-title-input" type="text" placeholder="My Custom Tab">
+    <input id="tab-title-input" type="text" placeholder="Inbox">
     <label>🔗 URL to Open</label>
     <input id="tab-url-input" type="text" placeholder="https://example.com">
     <div class="actions">
       <button class="save-btn" id="save-file-btn" type="button">💾 Save File</button>
+      <button class="private-btn" id="private-launcher-btn" type="button">🔐 Private Launcher</button>
       <button class="tab-btn" id="open-tab-btn" type="button">📂 Open Tab</button>
       <button class="close-btn" id="close-export-btn" type="button">✕</button>
     </div>
@@ -411,6 +438,7 @@ function getHTML() {
       const tabTitleInput = document.getElementById('tab-title-input');
       const tabUrlInput = document.getElementById('tab-url-input');
       const saveFileBtn = document.getElementById('save-file-btn');
+      const privateLauncherBtn = document.getElementById('private-launcher-btn');
       const openTabBtn = document.getElementById('open-tab-btn');
       const closeExportBtn = document.getElementById('close-export-btn');
 
@@ -487,6 +515,28 @@ function getHTML() {
           '</html>';
       };
 
+      const buildPrivateLauncherFile = (targetUrl, title) => {
+        const safeTitle = escapeHTML(title || 'Inbox');
+        const safeUrl = escapeHTML(targetUrl);
+        const icon = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#f8fafc"/><path fill="#2563eb" d="M12 18h40a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V22a4 4 0 0 1 4-4z"/><path fill="#eff6ff" d="M12 23.5 32 36l20-12.5V28L32 40.5 12 28z"/></svg>');
+
+        return '<!doctype html>\\n' +
+          '<html lang="en">\\n' +
+          '<head>\\n' +
+          '<meta charset="utf-8">\\n' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1">\\n' +
+          '<meta name="referrer" content="no-referrer">\\n' +
+          '<link rel="icon" href="' + icon + '">\\n' +
+          '<title>' + safeTitle + '</title>\\n' +
+          '<style>html,body{height:100%;margin:0;background:#0b1120;color:#e5e7eb;font:16px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}main{min-height:100%;display:grid;place-items:center;padding:24px;text-align:center}a{color:#5eead4;overflow-wrap:anywhere}.box{max-width:720px}.title{font-size:20px;font-weight:700;margin-bottom:10px}.hint{color:#94a3b8}</style>\\n' +
+          '</head>\\n' +
+          '<body>\\n' +
+          '<main><div class="box"><div class="title">' + safeTitle + '</div><p class="hint">Opening your selected page.</p><p><a href="' + safeUrl + '" rel="noopener noreferrer">Open now</a></p></div></main>\\n' +
+          '<script>location.replace(' + JSON.stringify(targetUrl) + ');<\\/script>\\n' +
+          '</body>\\n' +
+          '</html>';
+      };
+
       const proxyFetch = async (targetUrl, options = {}) => {
         const pushHistory = options.pushHistory !== false;
         console.log('proxyFetch called with:', targetUrl);
@@ -515,7 +565,7 @@ function getHTML() {
           console.log('Got HTML, length:', html.length);
           currentHtml = html;
           
-          const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+          const titleMatch = html.match(/<title[^>]*>([^<]*)<\\/title>/i);
           currentPageTitle = titleMatch ? titleMatch[1].trim() : 'Untitled';
           
           const rewritten = html.replace(
@@ -599,6 +649,44 @@ function getHTML() {
         currentUrlDisplay.textContent = 'Downloaded Chromebook file: ' + finalFilename + '.html';
       };
 
+      const downloadPrivateLauncherFile = (filename, urlToOpen, title) => {
+        const normalized = normalizeUrl(urlToOpen || currentUrl || urlBar.value);
+
+        if (!normalized) {
+          alert('Enter a valid http or https URL to export.');
+          return;
+        }
+
+        let target;
+
+        try {
+          target = new URL(normalized);
+        } catch {
+          alert('Enter a valid http or https URL to export.');
+          return;
+        }
+
+        if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+          alert('Enter a valid http or https URL to export.');
+          return;
+        }
+
+        const finalTitle = title || 'Inbox';
+        const finalFilename = safeFilename(filename || finalTitle || normalized);
+        const html = buildPrivateLauncherFile(target.href, finalTitle);
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = finalFilename + '.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        currentUrlDisplay.textContent = 'Downloaded private launcher: ' + finalFilename + '.html';
+      };
+
       const openAsTab = (title, urlToOpen) => {
         if (!currentHtml && !urlToOpen) {
           alert('No page loaded and no URL provided.');
@@ -626,7 +714,7 @@ function getHTML() {
           return 'https://www.google.com/search?q=' + encodeURIComponent(url);
         }
         
-        if (!url.match(/^https?:\/\//i)) {
+        if (!url.match(/^https?:\\/\\//i)) {
           url = 'https://' + url;
         }
         return url;
@@ -743,6 +831,15 @@ function getHTML() {
         const title = tabTitleInput.value.trim() || currentPageTitle || 'Website';
         const url = tabUrlInput.value.trim() || currentUrl || urlBar.value.trim();
         downloadChromebookFile(filename, url, title);
+        exportPanel.classList.remove('show');
+      });
+
+      privateLauncherBtn.addEventListener('click', function(e) {
+        console.log('privateLauncherBtn clicked');
+        const filename = fileNameInput.value.trim() || currentPageTitle || 'private_launcher';
+        const title = tabTitleInput.value.trim() || 'Inbox';
+        const url = tabUrlInput.value.trim() || currentUrl || urlBar.value.trim();
+        downloadPrivateLauncherFile(filename, url, title);
         exportPanel.classList.remove('show');
       });
 
