@@ -4,7 +4,7 @@ export default {
     const path = url.pathname;
 
     if (path === '/' || path === '/index.html') {
-      return new Response(getCloakedApp(), {
+      return new Response(getHTML(), {
         headers: { 
           'Content-Type': 'text/html',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
@@ -12,131 +12,25 @@ export default {
       });
     }
 
-    if (path === '/cloak') {
-      const target = url.searchParams.get('url');
-      if (!target) {
-        return new Response('Missing url', { status: 400 });
-      }
-
-      try {
-        // Normalize the URL - auto-add https if missing
-        let targetUrl;
-        try {
-          // If it doesn't have a protocol, add https
-          if (!target.match(/^https?:\/\//i)) {
-            targetUrl = new URL('https://' + target);
-          } else {
-            targetUrl = new URL(target);
-          }
-        } catch (e) {
-          return new Response('Invalid URL: ' + target, { status: 400 });
-        }
-
-        const response = await fetch(targetUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-          }
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        
-        if (contentType.includes('text/html')) {
-          const baseUrl = targetUrl.origin;
-          const proxyBase = url.origin;
-
-          // Rewrite ALL links to go through the proxy
-          class LinkRewriter {
-            constructor(attribute, baseUrl, proxyBase) {
-              this.attribute = attribute;
-              this.baseUrl = baseUrl;
-              this.proxyBase = proxyBase;
-            }
-            element(element) {
-              const attr = element.getAttribute(this.attribute);
-              if (!attr) return;
-              if (attr.startsWith('javascript:') || attr.startsWith('data:') || attr.startsWith('#')) return;
-              
-              let fullUrl;
-              try {
-                fullUrl = new URL(attr, this.baseUrl).href;
-              } catch {
-                return;
-              }
-              
-              if (fullUrl.startsWith(this.proxyBase)) return;
-              
-              // Preserve the protocol for external links
-              const proxyUrl = `${this.proxyBase}/cloak?url=${encodeURIComponent(fullUrl)}`;
-              element.setAttribute(this.attribute, proxyUrl);
-            }
-          }
-
-          const rewriter = new HTMLRewriter()
-            .on('a', new LinkRewriter('href', baseUrl, proxyBase))
-            .on('link', new LinkRewriter('href', baseUrl, proxyBase))
-            .on('img', new LinkRewriter('src', baseUrl, proxyBase))
-            .on('script', new LinkRewriter('src', baseUrl, proxyBase))
-            .on('form', new LinkRewriter('action', baseUrl, proxyBase));
-
-          const rewrittenResponse = rewriter.transform(response);
-          
-          const headers = new Headers(rewrittenResponse.headers);
-          headers.set('Access-Control-Allow-Origin', '*');
-          headers.delete('Content-Security-Policy');
-          headers.delete('X-Frame-Options');
-          headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-
-          // Strip monitoring scripts
-          const body = await rewrittenResponse.text();
-          const strippedBody = body
-            .replace(/<script[^>]*src=["'][^"']*securly[^"']*["'][^>]*><\/script>/gi, '')
-            .replace(/<script[^>]*>.*?securly.*?<\/script>/gis, '')
-            .replace(/<script[^>]*src=["'][^"']*gaggle[^"']*["'][^>]*><\/script>/gi, '')
-            .replace(/<script[^>]*>.*?gaggle.*?<\/script>/gis, '')
-            .replace(/securly/gi, '')
-            .replace(/gaggle/gi, '')
-            .replace(/goguardian/gi, '');
-
-          return new Response(strippedBody, {
-            status: rewrittenResponse.status,
-            headers: headers
-          });
-        }
-
-        const headers = new Headers(response.headers);
-        headers.set('Access-Control-Allow-Origin', '*');
-        return new Response(response.body, {
-          status: response.status,
-          headers: headers
-        });
-
-      } catch (error) {
-        return new Response(`Error: ${error.message}`, { 
-          status: 500,
-          headers: { 'Content-Type': 'text/plain' }
-        });
-      }
-    }
-
-    return new Response('404 Not Found', { status: 404 });
+    return new Response('Not found', { status: 404 });
   }
 };
 
-function getCloakedApp() {
+function getHTML() {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Classroom</title>
+  <title>Unblocked Browser</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { 
-      font-family: 'Google Sans', system-ui, sans-serif; 
-      background: #f8f9fa; 
+      font-family: system-ui, sans-serif; 
+      background: #0a0a0f; 
       height: 100vh; 
       overflow: hidden;
+      color: #e0e0e0;
     }
     #toolbar {
       position: fixed;
@@ -144,63 +38,179 @@ function getCloakedApp() {
       left: 0;
       right: 0;
       z-index: 100;
-      background: #1a73e8;
-      padding: 10px 20px;
+      background: #1a1a2e;
+      padding: 8px 16px;
       display: flex;
-      gap: 10px;
+      gap: 6px;
       align-items: center;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       flex-wrap: wrap;
     }
     #toolbar .logo {
-      color: white;
-      font-weight: 500;
-      font-size: 16px;
+      color: #6c63ff;
+      font-weight: 600;
+      font-size: 13px;
       white-space: nowrap;
     }
     #url-bar {
       flex: 1;
-      min-width: 200px;
-      padding: 8px 16px;
-      border: none;
-      border-radius: 20px;
-      font-size: 14px;
+      min-width: 120px;
+      padding: 6px 12px;
+      border: 1px solid #333;
+      border-radius: 16px;
+      font-size: 13px;
       outline: none;
-      background: rgba(255,255,255,0.95);
-      color: #202124;
+      background: #2a2a40;
+      color: #e0e0e0;
     }
     #url-bar:focus {
-      background: white;
-      box-shadow: 0 0 0 2px rgba(255,255,255,0.4);
+      border-color: #6c63ff;
+      background: #333350;
+    }
+    #url-bar::placeholder {
+      color: #888;
     }
     #toolbar button {
-      padding: 8px 18px;
-      background: rgba(255,255,255,0.2);
+      padding: 6px 12px;
+      background: #2a2a4a;
       border: none;
-      border-radius: 20px;
-      color: white;
+      border-radius: 16px;
+      color: #e0e0e0;
       font-weight: 500;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       white-space: nowrap;
       transition: background 0.2s;
     }
     #toolbar button:hover {
-      background: rgba(255,255,255,0.3);
+      background: #3a3a5a;
     }
     #toolbar button.primary {
-      background: rgba(255,255,255,0.3);
+      background: #6c63ff;
+      color: white;
     }
     #toolbar button.primary:hover {
-      background: rgba(255,255,255,0.4);
+      background: #7b73ff;
+    }
+    #toolbar button.download {
+      background: #2d8a4e;
+      color: white;
+    }
+    #toolbar button.download:hover {
+      background: #3aa85e;
+    }
+    #toolbar button.export {
+      background: #f5a623;
+      color: #1a1a2e;
+      font-weight: 700;
+      box-shadow: 0 0 12px rgba(245, 166, 35, 0.3);
+    }
+    #toolbar button.export:hover {
+      background: #f7c948;
+      box-shadow: 0 0 20px rgba(245, 166, 35, 0.5);
+      transform: scale(1.05);
+    }
+    #export-panel {
+      display: none;
+      position: fixed;
+      top: 55px;
+      right: 16px;
+      z-index: 200;
+      background: #1a1a2e;
+      border: 1px solid #f5a623;
+      border-radius: 12px;
+      padding: 20px 24px;
+      min-width: 300px;
+      max-width: 380px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+      animation: slideIn 0.25s ease-out;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #export-panel.show {
+      display: block;
+    }
+    #export-panel .panel-title {
+      color: #f5a623;
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #export-panel label {
+      display: block;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+    #export-panel label:first-of-type {
+      margin-top: 0;
+    }
+    #export-panel input {
+      width: 100%;
+      padding: 8px 12px;
+      background: #2a2a40;
+      border: 1px solid #444;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #export-panel input:focus {
+      border-color: #f5a623;
+    }
+    #export-panel .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+    #export-panel .actions button {
+      flex: 1;
+      padding: 8px 14px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      min-width: 70px;
+      transition: all 0.2s;
+    }
+    #export-panel .actions .save-btn {
+      background: #2d8a4e;
+      color: white;
+    }
+    #export-panel .actions .save-btn:hover {
+      background: #3aa85e;
+    }
+    #export-panel .actions .tab-btn {
+      background: #6c63ff;
+      color: white;
+    }
+    #export-panel .actions .tab-btn:hover {
+      background: #7b73ff;
+    }
+    #export-panel .actions .close-btn {
+      background: #444;
+      color: #e0e0e0;
+      flex: 0.4;
+    }
+    #export-panel .actions .close-btn:hover {
+      background: #555;
     }
     #frame-container {
       position: fixed;
-      top: 56px;
+      top: 50px;
       left: 0;
       right: 0;
       bottom: 0;
-      background: white;
+      background: #111;
     }
     #content-frame {
       width: 100%;
@@ -214,13 +224,13 @@ function getCloakedApp() {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      color: #1a73e8;
+      color: #f5a623;
       font-size: 16px;
       z-index: 50;
-      background: rgba(255,255,255,0.95);
+      background: rgba(10,10,15,0.9);
       padding: 16px 32px;
       border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
     #status-bar {
       position: fixed;
@@ -228,45 +238,62 @@ function getCloakedApp() {
       left: 0;
       right: 0;
       z-index: 100;
-      background: rgba(26, 115, 232, 0.95);
-      padding: 4px 20px;
-      color: white;
-      font-size: 12px;
+      background: rgba(26,26,46,0.95);
+      padding: 4px 16px;
+      color: #888;
+      font-size: 11px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      height: 28px;
+      height: 24px;
     }
     #status-bar .url-display {
-      opacity: 0.8;
+      opacity: 0.7;
       font-family: monospace;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 70%;
+      max-width: 55%;
     }
     #status-bar .status-text {
-      opacity: 0.7;
-      font-size: 11px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
     }
     .badge {
-      background: rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.1);
       padding: 2px 10px;
       border-radius: 12px;
       font-size: 10px;
-      font-weight: 500;
     }
   </style>
 </head>
 <body>
   <div id="toolbar">
-    <span class="logo">📚 Classroom</span>
-    <input id="url-bar" type="text" placeholder="Search or enter URL (e.g., example.com)" spellcheck="false" autofocus>
+    <span class="logo">🔒 Proxy</span>
+    <input id="url-bar" type="text" placeholder="Enter URL" spellcheck="false" autofocus>
     <button id="go-btn" class="primary">Go</button>
+    <button id="export-btn" class="export">📦 Export</button>
     <button id="cloak-btn">🛡️ Cloak</button>
     <button id="back-btn">←</button>
     <button id="forward-btn">→</button>
     <button id="refresh-btn">↻</button>
+  </div>
+
+  <!-- Export Panel -->
+  <div id="export-panel">
+    <div class="panel-title">📦 Export Options</div>
+    <label>📄 File Name (without .html)</label>
+    <input id="file-name-input" type="text" placeholder="my_page">
+    <label>🏷️ Tab Title</label>
+    <input id="tab-title-input" type="text" placeholder="My Custom Tab">
+    <label>🔗 URL to Open (optional)</label>
+    <input id="tab-url-input" type="text" placeholder="https://example.com">
+    <div class="actions">
+      <button class="save-btn" id="save-file-btn">💾 Save File</button>
+      <button class="tab-btn" id="open-tab-btn">📂 Open Tab</button>
+      <button class="close-btn" id="close-export-btn">✕</button>
+    </div>
   </div>
 
   <div id="loading">Loading...</div>
@@ -277,7 +304,10 @@ function getCloakedApp() {
 
   <div id="status-bar">
     <span class="url-display" id="current-url">Ready</span>
-    <span class="status-text"><span class="badge">🛡️ Secure</span> Proxy active</span>
+    <span class="status-text">
+      <span class="badge">📄 HTML</span>
+      <span>🛡️ Proxy active</span>
+    </span>
   </div>
 
   <script>
@@ -285,6 +315,7 @@ function getCloakedApp() {
       const frame = document.getElementById('content-frame');
       const urlBar = document.getElementById('url-bar');
       const goBtn = document.getElementById('go-btn');
+      const exportBtn = document.getElementById('export-btn');
       const cloakBtn = document.getElementById('cloak-btn');
       const backBtn = document.getElementById('back-btn');
       const forwardBtn = document.getElementById('forward-btn');
@@ -292,9 +323,21 @@ function getCloakedApp() {
       const loading = document.getElementById('loading');
       const currentUrlDisplay = document.getElementById('current-url');
 
+      const exportPanel = document.getElementById('export-panel');
+      const fileNameInput = document.getElementById('file-name-input');
+      const tabTitleInput = document.getElementById('tab-title-input');
+      const tabUrlInput = document.getElementById('tab-url-input');
+      const saveFileBtn = document.getElementById('save-file-btn');
+      const openTabBtn = document.getElementById('open-tab-btn');
+      const closeExportBtn = document.getElementById('close-export-btn');
+
       let historyStack = [];
       let historyIndex = -1;
       let currentUrl = '';
+      let currentHtml = '';
+      let currentPageTitle = '';
+
+      const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
       const proxyFetch = async (targetUrl) => {
         if (!targetUrl) return;
@@ -303,16 +346,47 @@ function getCloakedApp() {
         currentUrlDisplay.textContent = 'Loading: ' + targetUrl;
         
         try {
-          const response = await fetch('/cloak?url=' + encodeURIComponent(targetUrl));
-          if (!response.ok) throw new Error('Fetch failed: ' + response.status);
+          const response = await fetch(CORS_PROXY + encodeURIComponent(targetUrl));
+          
+          if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+          }
+          
           const html = await response.text();
-          frame.srcdoc = html;
+          currentHtml = html;
+          
+          const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+          currentPageTitle = titleMatch ? titleMatch[1].trim() : 'Untitled';
+          
+          const rewritten = html.replace(
+            /(href|src|action)=["']([^"']*)["']/gi,
+            (match, attr, value) => {
+              if (value.startsWith('http') || value.startsWith('//')) {
+                const full = value.startsWith('//') ? 'https:' + value : value;
+                return attr + '="' + CORS_PROXY + encodeURIComponent(full) + '"';
+              } else if (value.startsWith('/')) {
+                const base = new URL(targetUrl).origin;
+                return attr + '="' + CORS_PROXY + encodeURIComponent(base + value) + '"';
+              } else if (!value.startsWith('javascript:') && !value.startsWith('data:')) {
+                const base = new URL(targetUrl).origin;
+                const fixed = value.startsWith('./') ? value.slice(1) : value;
+                return attr + '="' + CORS_PROXY + encodeURIComponent(base + '/' + fixed) + '"';
+              }
+              return match;
+            }
+          );
+          
+          frame.srcdoc = rewritten;
           
           currentUrl = targetUrl;
           currentUrlDisplay.textContent = targetUrl;
           urlBar.value = targetUrl;
           
-          // Update history
+          const sanitizedTitle = currentPageTitle.replace(/[^a-z0-9]/gi, '_').substring(0, 50) || 'page';
+          fileNameInput.value = sanitizedTitle;
+          tabTitleInput.value = currentPageTitle;
+          tabUrlInput.value = targetUrl;
+          
           if (historyIndex < historyStack.length - 1) {
             historyStack = historyStack.slice(0, historyIndex + 1);
           }
@@ -320,23 +394,97 @@ function getCloakedApp() {
           historyIndex = historyStack.length - 1;
           
         } catch (err) {
-          frame.srcdoc = '<h1 style="color:red;padding:40px;font-family:system-ui;">Error: ' + err.message + '</h1>';
+          currentHtml = '';
+          currentPageTitle = 'Error';
+          frame.srcdoc = '<div style="color:red;padding:40px;font-family:system-ui;font-size:16px;">Error: ' + err.message + '</div>';
           currentUrlDisplay.textContent = 'Error: ' + err.message;
         } finally {
           loading.style.display = 'none';
         }
       };
 
+      const downloadCurrentPage = (filename) => {
+        if (!currentHtml) {
+          alert('No page loaded. Load a URL first.');
+          return;
+        }
+
+        const safeFilename = (filename || currentPageTitle || 'page')
+          .replace(/[^a-z0-9]/gi, '_')
+          .substring(0, 50) || 'downloaded_page';
+        
+        const blob = new Blob([currentHtml], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = safeFilename + '.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        currentUrlDisplay.textContent = 'Downloaded: ' + safeFilename + '.html';
+      };
+
+      const openAsTab = (title, urlToOpen) => {
+        if (!currentHtml && !urlToOpen) {
+          alert('No page loaded and no URL provided.');
+          return;
+        }
+
+        let finalTitle = title || currentPageTitle || 'New Tab';
+        let finalUrl = urlToOpen || currentUrl || '';
+
+        if (urlToOpen && urlToOpen !== currentUrl) {
+          const w = window.open('about:blank');
+          if (!w) {
+            alert('Pop-up blocked. Allow pop-ups for this site.');
+            return;
+          }
+          w.document.write(\`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>\${finalTitle}</title>
+              <style>
+                body { margin:0; overflow:hidden; background:#0a0a0f; }
+                iframe { width:100%; height:100%; border:none; }
+              </style>
+            </head>
+            <body>
+              <iframe src="\${window.location.origin}/?url=\${encodeURIComponent(urlToOpen)}"></iframe>
+            </body>
+            </html>
+          \`);
+          w.document.close();
+          return;
+        }
+
+        const w = window.open('about:blank');
+        if (!w) {
+          alert('Pop-up blocked. Allow pop-ups for this site.');
+          return;
+        }
+        
+        const customHtml = currentHtml.replace(
+          /<title[^>]*>([^<]*)<\/title>/i,
+          '<title>' + finalTitle + '</title>'
+        );
+        
+        w.document.write(customHtml);
+        w.document.close();
+        
+        currentUrlDisplay.textContent = 'Opened as tab: ' + finalTitle;
+      };
+
       const normalizeUrl = (input) => {
         let url = input.trim();
         if (!url) return null;
         
-        // If it looks like a search query (contains spaces or no dot), treat as Google search
-        if (url.includes(' ') || (!url.includes('.') && !url.includes('/'))) {
+        if (url.includes(' ') || (!url.includes('.') && !url.includes('/') && !url.includes(':'))) {
           return 'https://www.google.com/search?q=' + encodeURIComponent(url);
         }
         
-        // Auto-add https:// if no protocol
         if (!url.match(/^https?:\/\//i)) {
           url = 'https://' + url;
         }
@@ -388,30 +536,65 @@ function getCloakedApp() {
         w.document.write(\`
           <!DOCTYPE html>
           <html>
-          <head><title>Google Classroom</title></head>
+          <head><title></title></head>
           <body style="margin:0;overflow:hidden;">
-            <iframe src="\${window.location.origin}/?cloak=launch&url=\${encodeURIComponent(normalized)}" 
+            <iframe src="\${window.location.origin}/" 
                     style="width:100%;height:100%;border:none;">
             </iframe>
           </body>
           </html>
         \`);
         w.document.close();
+        setTimeout(() => {
+          w.postMessage({ type: 'navigate', url: normalized }, '*');
+        }, 500);
       };
 
-      // Handle Enter key in URL bar
+      const toggleExportPanel = () => {
+        exportPanel.classList.toggle('show');
+        if (exportPanel.classList.contains('show')) {
+          fileNameInput.value = currentPageTitle.replace(/[^a-z0-9]/gi, '_').substring(0, 50) || 'page';
+          tabTitleInput.value = currentPageTitle || 'New Tab';
+          tabUrlInput.value = currentUrl || '';
+        }
+      };
+
       urlBar.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') loadUrl();
       });
 
-      // Click handlers
       goBtn.addEventListener('click', loadUrl);
+      exportBtn.addEventListener('click', toggleExportPanel);
       cloakBtn.addEventListener('click', openCloaked);
       backBtn.addEventListener('click', goBack);
       forwardBtn.addEventListener('click', goForward);
       refreshBtn.addEventListener('click', refresh);
 
-      // Listen for clicks inside iframe that need to update the URL bar
+      saveFileBtn.addEventListener('click', () => {
+        const filename = fileNameInput.value.trim() || currentPageTitle || 'page';
+        downloadCurrentPage(filename);
+        exportPanel.classList.remove('show');
+      });
+
+      openTabBtn.addEventListener('click', () => {
+        const title = tabTitleInput.value.trim() || currentPageTitle || 'New Tab';
+        const url = tabUrlInput.value.trim() || currentUrl || '';
+        openAsTab(title, url);
+        exportPanel.classList.remove('show');
+      });
+
+      closeExportBtn.addEventListener('click', () => {
+        exportPanel.classList.remove('show');
+      });
+
+      document.addEventListener('click', (e) => {
+        if (exportPanel.classList.contains('show')) {
+          if (!exportPanel.contains(e.target) && e.target !== exportBtn) {
+            exportPanel.classList.remove('show');
+          }
+        }
+      });
+
       window.addEventListener('message', (e) => {
         if (e.data && e.data.type === 'navigate') {
           const normalized = normalizeUrl(e.data.url);
@@ -422,7 +605,6 @@ function getCloakedApp() {
         }
       });
 
-      // Load default page
       urlBar.value = 'example.com';
       setTimeout(loadUrl, 300);
     })();
