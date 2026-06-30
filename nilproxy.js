@@ -3,7 +3,6 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Serve the HTML interface at the root
     if (path === '/' || path === '/index.html') {
       return new Response(getHTML(), {
         headers: { 
@@ -13,9 +12,83 @@ export default {
       });
     }
 
+    if (path === '/proxy') {
+      return proxyRequest(url, env);
+    }
+
     return new Response('Not found', { status: 404 });
   }
 };
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
+}
+
+function allowedHosts(env) {
+  return new Set(
+    String(env.ALLOWED_HOSTS || '')
+      .split(',')
+      .map(host => host.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function parseTarget(rawUrl) {
+  let target;
+
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return null;
+  }
+
+  return target;
+}
+
+async function proxyRequest(url, env) {
+  const target = parseTarget(url.searchParams.get('url') || '');
+
+  if (!target) {
+    return json({ error: 'Enter a valid http or https URL.' }, 400);
+  }
+
+  const hosts = allowedHosts(env);
+
+  if (hosts.size === 0) {
+    return json({ error: 'Set ALLOWED_HOSTS in wrangler.jsonc before using the proxy.' }, 500);
+  }
+
+  if (!hosts.has(target.hostname.toLowerCase())) {
+    return json({ error: 'This host is not in ALLOWED_HOSTS.' }, 403);
+  }
+
+  const upstream = await fetch(target.href, {
+    headers: {
+      'User-Agent': 'nilproxy/1.0'
+    },
+    redirect: 'follow'
+  });
+  const headers = new Headers(upstream.headers);
+
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.delete('Content-Security-Policy');
+  headers.delete('X-Frame-Options');
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers
+  });
+}
 
 function getHTML() {
   return `<!DOCTYPE html>
@@ -266,12 +339,12 @@ function getHTML() {
   <div id="toolbar">
     <span class="logo">🔒 Proxy</span>
     <input id="url-bar" type="text" placeholder="Enter URL" spellcheck="false" autofocus>
-    <button id="go-btn" class="primary">Go</button>
-    <button id="export-btn" class="export">📦 Export</button>
-    <button id="cloak-btn">🛡️ Cloak</button>
-    <button id="back-btn">←</button>
-    <button id="forward-btn">→</button>
-    <button id="refresh-btn">↻</button>
+    <button id="go-btn" class="primary" type="button">Go</button>
+    <button id="export-btn" class="export" type="button">📦 Export</button>
+    <button id="cloak-btn" type="button">🛡️ Cloak</button>
+    <button id="back-btn" type="button">←</button>
+    <button id="forward-btn" type="button">→</button>
+    <button id="refresh-btn" type="button">↻</button>
   </div>
 
   <div id="export-panel">
@@ -283,9 +356,9 @@ function getHTML() {
     <label>🔗 URL to Open (optional)</label>
     <input id="tab-url-input" type="text" placeholder="https://example.com">
     <div class="actions">
-      <button class="save-btn" id="save-file-btn">💾 Save File</button>
-      <button class="tab-btn" id="open-tab-btn">📂 Open Tab</button>
-      <button class="close-btn" id="close-export-btn">✕</button>
+      <button class="save-btn" id="save-file-btn" type="button">💾 Save File</button>
+      <button class="tab-btn" id="open-tab-btn" type="button">📂 Open Tab</button>
+      <button class="close-btn" id="close-export-btn" type="button">✕</button>
     </div>
   </div>
 
@@ -332,7 +405,14 @@ function getHTML() {
       let currentHtml = '';
       let currentPageTitle = '';
 
-      const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+      const CORS_PROXY = '/proxy?url=';
+
+      const escapeHTML = (value) => String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
 
       const proxyFetch = async (targetUrl) => {
         console.log('proxyFetch called with:', targetUrl);
@@ -346,8 +426,14 @@ function getHTML() {
           console.log('Fetching from proxy:', proxyUrl);
           
           const response = await fetch(proxyUrl);
+          const contentType = response.headers.get('content-type') || '';
           
           if (!response.ok) {
+            if (contentType.includes('application/json')) {
+              const data = await response.json();
+              throw new Error(data.error || ('HTTP ' + response.status));
+            }
+
             throw new Error('HTTP ' + response.status + ': ' + response.statusText);
           }
           
@@ -448,7 +534,7 @@ function getHTML() {
             <!DOCTYPE html>
             <html>
             <head>
-              <title>\${finalTitle}</title>
+              <title>\${escapeHTML(finalTitle)}</title>
               <style>
                 body { margin:0; overflow:hidden; background:#0a0a0f; }
                 iframe { width:100%; height:100%; border:none; }
@@ -471,7 +557,7 @@ function getHTML() {
         
         const customHtml = currentHtml.replace(
           /<title[^>]*>([^<]*)<\/title>/i,
-          '<title>' + finalTitle + '</title>'
+          '<title>' + escapeHTML(finalTitle) + '</title>'
         );
         
         w.document.write(customHtml);
@@ -651,9 +737,9 @@ function getHTML() {
 
       console.log('All event listeners set up');
       
-      // Load default page
-      urlBar.value = 'example.com';
-      console.log('Loading default page: example.com');
+      const startupUrl = new URLSearchParams(window.location.search).get('url') || 'example.com';
+      urlBar.value = startupUrl;
+      console.log('Loading startup page:', startupUrl);
       setTimeout(loadUrl, 500);
     })();
   </script>
