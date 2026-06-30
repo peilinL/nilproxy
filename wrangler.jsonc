@@ -1,5 +1,5 @@
 {
-  "name": "nilproxy",
+  "name": "nilproxy-worker",
   "compatibility_date": "2024-12-18",
   "main": "nilproxy.js",
   "compatibility_flags": ["nodejs_compat"],
