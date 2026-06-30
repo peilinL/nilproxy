@@ -3,6 +3,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // Serve the HTML interface at the root
     if (path === '/' || path === '/index.html') {
       return new Response(getHTML(), {
         headers: { 
@@ -91,13 +92,6 @@ function getHTML() {
     }
     #toolbar button.primary:hover {
       background: #7b73ff;
-    }
-    #toolbar button.download {
-      background: #2d8a4e;
-      color: white;
-    }
-    #toolbar button.download:hover {
-      background: #3aa85e;
     }
     #toolbar button.export {
       background: #f5a623;
@@ -280,7 +274,6 @@ function getHTML() {
     <button id="refresh-btn">↻</button>
   </div>
 
-  <!-- Export Panel -->
   <div id="export-panel">
     <div class="panel-title">📦 Export Options</div>
     <label>📄 File Name (without .html)</label>
@@ -312,6 +305,8 @@ function getHTML() {
 
   <script>
     (function() {
+      console.log('Proxy script loaded');
+      
       const frame = document.getElementById('content-frame');
       const urlBar = document.getElementById('url-bar');
       const goBtn = document.getElementById('go-btn');
@@ -340,19 +335,24 @@ function getHTML() {
       const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
       const proxyFetch = async (targetUrl) => {
+        console.log('proxyFetch called with:', targetUrl);
         if (!targetUrl) return;
         
         loading.style.display = 'block';
         currentUrlDisplay.textContent = 'Loading: ' + targetUrl;
         
         try {
-          const response = await fetch(CORS_PROXY + encodeURIComponent(targetUrl));
+          const proxyUrl = CORS_PROXY + encodeURIComponent(targetUrl);
+          console.log('Fetching from proxy:', proxyUrl);
+          
+          const response = await fetch(proxyUrl);
           
           if (!response.ok) {
             throw new Error('HTTP ' + response.status + ': ' + response.statusText);
           }
           
           const html = await response.text();
+          console.log('Got HTML, length:', html.length);
           currentHtml = html;
           
           const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
@@ -393,7 +393,10 @@ function getHTML() {
           historyStack.push(targetUrl);
           historyIndex = historyStack.length - 1;
           
+          console.log('Page loaded successfully');
+          
         } catch (err) {
+          console.error('proxyFetch error:', err);
           currentHtml = '';
           currentPageTitle = 'Error';
           frame.srcdoc = '<div style="color:red;padding:40px;font-family:system-ui;font-size:16px;">Error: ' + err.message + '</div>';
@@ -492,9 +495,13 @@ function getHTML() {
       };
 
       const loadUrl = () => {
+        console.log('loadUrl called, value:', urlBar.value);
         const normalized = normalizeUrl(urlBar.value);
+        console.log('normalized:', normalized);
         if (normalized) {
           proxyFetch(normalized);
+        } else {
+          console.log('Normalization returned null');
         }
       };
 
@@ -559,35 +566,72 @@ function getHTML() {
         }
       };
 
-      urlBar.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') loadUrl();
+      // Debug: log all click events
+      document.addEventListener('click', function(e) {
+        console.log('Click detected on:', e.target.tagName, e.target.id, e.target.className);
       });
 
-      goBtn.addEventListener('click', loadUrl);
-      exportBtn.addEventListener('click', toggleExportPanel);
-      cloakBtn.addEventListener('click', openCloaked);
-      backBtn.addEventListener('click', goBack);
-      forwardBtn.addEventListener('click', goForward);
-      refreshBtn.addEventListener('click', refresh);
+      console.log('Setting up event listeners');
+      
+      urlBar.addEventListener('keydown', function(e) {
+        console.log('keydown on url-bar:', e.key);
+        if (e.key === 'Enter') {
+          console.log('Enter pressed, calling loadUrl');
+          loadUrl();
+        }
+      });
 
-      saveFileBtn.addEventListener('click', () => {
+      goBtn.addEventListener('click', function(e) {
+        console.log('goBtn clicked');
+        loadUrl();
+      });
+
+      exportBtn.addEventListener('click', function(e) {
+        console.log('exportBtn clicked');
+        toggleExportPanel();
+      });
+      
+      cloakBtn.addEventListener('click', function(e) {
+        console.log('cloakBtn clicked');
+        openCloaked();
+      });
+      
+      backBtn.addEventListener('click', function(e) {
+        console.log('backBtn clicked');
+        goBack();
+      });
+      
+      forwardBtn.addEventListener('click', function(e) {
+        console.log('forwardBtn clicked');
+        goForward();
+      });
+      
+      refreshBtn.addEventListener('click', function(e) {
+        console.log('refreshBtn clicked');
+        refresh();
+      });
+
+      saveFileBtn.addEventListener('click', function(e) {
+        console.log('saveFileBtn clicked');
         const filename = fileNameInput.value.trim() || currentPageTitle || 'page';
         downloadCurrentPage(filename);
         exportPanel.classList.remove('show');
       });
 
-      openTabBtn.addEventListener('click', () => {
+      openTabBtn.addEventListener('click', function(e) {
+        console.log('openTabBtn clicked');
         const title = tabTitleInput.value.trim() || currentPageTitle || 'New Tab';
         const url = tabUrlInput.value.trim() || currentUrl || '';
         openAsTab(title, url);
         exportPanel.classList.remove('show');
       });
 
-      closeExportBtn.addEventListener('click', () => {
+      closeExportBtn.addEventListener('click', function(e) {
+        console.log('closeExportBtn clicked');
         exportPanel.classList.remove('show');
       });
 
-      document.addEventListener('click', (e) => {
+      document.addEventListener('click', function(e) {
         if (exportPanel.classList.contains('show')) {
           if (!exportPanel.contains(e.target) && e.target !== exportBtn) {
             exportPanel.classList.remove('show');
@@ -595,7 +639,7 @@ function getHTML() {
         }
       });
 
-      window.addEventListener('message', (e) => {
+      window.addEventListener('message', function(e) {
         if (e.data && e.data.type === 'navigate') {
           const normalized = normalizeUrl(e.data.url);
           if (normalized) {
@@ -605,8 +649,12 @@ function getHTML() {
         }
       });
 
+      console.log('All event listeners set up');
+      
+      // Load default page
       urlBar.value = 'example.com';
-      setTimeout(loadUrl, 300);
+      console.log('Loading default page: example.com');
+      setTimeout(loadUrl, 500);
     })();
   </script>
 </body>
